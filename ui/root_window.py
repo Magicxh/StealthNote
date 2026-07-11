@@ -148,14 +148,10 @@ class RootWindowMixin:
             print(f"[窗口样式] 设置失败: {e}")
 
     def _set_taskbar_visible(self, visible):
-        """设置任务栏是否显示"""
+        """设置任务栏是否显示（不影响主窗口显示状态）"""
         self.cfg['show_taskbar'] = visible
-        self._apply_window_style()
         if hasattr(self, '_taskbar_host') and self._taskbar_host:
-            if visible:
-                self._taskbar_host.set_visible(True)
-            else:
-                self._taskbar_host.set_visible(False)
+            self._taskbar_host.set_visible(visible)
 
     def _on_window_configure(self, event):
         if event.widget == self.root:

@@ -10,19 +10,24 @@ from utils import set_layered_transparent
 
 
 class TaskbarHost:
-    """任务栏代理窗口：在任务栏显示图标和标题，点击时激活主窗口"""
+    """任务栏代理窗口：在任务栏显示图标和标题，点击时激活主窗口。
+
+    关键设计：
+    - host_win 为独立顶级窗口（无父），root 的 deiconify/withdraw 不影响 host_win
+    - _programmatic 标志防止程序主动操作 host_win 时触发 Map/Unmap 连锁
+    """
 
     def __init__(self, app):
         self.app = app
         self.host_win = None
         self._host_hwnd = None
-        self._host_minimizing = False
-        self._host_restoring = False
+        self._programmatic = False
         self._create()
 
     def _create(self):
-        """创建任务栏代理窗口（透明正常窗口，确保任务栏图标显示且点击有效）"""
-        self.host_win = tk.Toplevel(self.app.root)
+        """创建任务栏代理窗口（独立顶级窗口，确保任务栏图标稳定显示）"""
+        # 无父窗口：root 的 deiconify/withdraw 不会连锁触发 host_win 的 Map/Unmap
+        self.host_win = tk.Toplevel()
         self.host_win.title(APP_NAME)
         if self.app.icon_path and os.path.exists(self.app.icon_path):
             try:
@@ -36,8 +41,8 @@ class TaskbarHost:
 
         ex_style = user32.GetWindowLongW(self._host_hwnd, GWL_EXSTYLE)
         ex_style |= WS_EX_LAYERED
-        ex_style |= WS_EX_APPWINDOW  # B23: 确保显示在任务栏
-        ex_style &= ~WS_EX_TOOLWINDOW  # B23: 清除工具窗口样式
+        ex_style |= WS_EX_APPWINDOW
+        ex_style &= ~WS_EX_TOOLWINDOW
         user32.SetWindowLongW(self._host_hwnd, GWL_EXSTYLE, ex_style)
         user32.SetLayeredWindowAttributes(self._host_hwnd, 0, 0, LWA_ALPHA)
         user32.SetWindowPos(self._host_hwnd, 0, 0, 0, 0, 0,
@@ -53,22 +58,18 @@ class TaskbarHost:
         self.app.exit_app()
 
     def _on_unmap(self, event=None):
-        """任务栏窗口被最小化：同步隐藏主窗口"""
-        if self._host_restoring:
+        """任务栏窗口被最小化：同步隐藏主窗口（仅用户主动操作时）"""
+        if self._programmatic:
             return
-        self._host_minimizing = True
         if self.app._window_visible:
             self.app._hide_window()
-        self.host_win.after(50, lambda: setattr(self, '_host_minimizing', False))
 
     def _on_map(self, event=None):
-        """任务栏窗口被恢复：同步显示主窗口"""
-        if self._host_minimizing:
+        """任务栏窗口被恢复：同步显示主窗口（仅用户主动操作时）"""
+        if self._programmatic:
             return
-        self._host_restoring = True
         if not self.app._window_visible:
             self.app._show_window()
-        self.host_win.after(50, lambda: setattr(self, '_host_restoring', False))
 
     def _on_focus(self, event=None):
         """任务栏窗口获得焦点：将主窗口带到前台"""
@@ -80,22 +81,42 @@ class TaskbarHost:
         if not self.host_win or not self.host_win.winfo_exists():
             return
         if not self.app.cfg['show_taskbar']:
-            self.host_win.withdraw()
+            self._programmatic = True
+            try:
+                self.host_win.withdraw()
+            finally:
+                self._programmatic = False
             return
 
         if self.app._window_visible:
-            self.host_win.deiconify()
-            self.host_win.lower()
+            self._programmatic = True
+            try:
+                self.host_win.deiconify()
+                self.host_win.lower()
+            finally:
+                self._programmatic = False
         else:
-            self.host_win.iconify()
+            self._programmatic = True
+            try:
+                self.host_win.iconify()
+            finally:
+                self._programmatic = False
 
     def set_visible(self, visible):
-        """设置任务栏可见性"""
-        if visible:
-            self.host_win.deiconify()
-        else:
-            self.host_win.withdraw()
+        """设置任务栏可见性（不影响主窗口显示状态）"""
+        if not self.host_win or not self.host_win.winfo_exists():
+            return
+        self._programmatic = True
+        try:
+            if visible:
+                self.host_win.deiconify()
+                self.host_win.lower()
+            else:
+                self.host_win.withdraw()
+        finally:
+            self._programmatic = False
 
     def set_title(self, title):
         """设置任务栏标题"""
-        self.host_win.title(title)
+        if self.host_win and self.host_win.winfo_exists():
+            self.host_win.title(title)
