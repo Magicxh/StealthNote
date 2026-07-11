@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stealth Note v2.9.5 - 主应用类"""
+"""Stealth Note v2.9.6 - 主应用类"""
 
 import os
 import sys
@@ -289,6 +289,7 @@ class StealthNoteApp(
         if getattr(self, '_text_hidden', False):
             self.root.withdraw()
             self.content_win.withdraw()
+            self._deiconify_handle()
         else:
             self._sync_content_window()
             self._force_foreground()

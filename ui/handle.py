@@ -10,8 +10,11 @@ class HandleMixin:
 
     def _init_handle(self):
         hs = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size'])) + HANDLE_WIN_PADDING * 2
-        # 使用无父窗口的 Toplevel（parent=None），避免 root 的 COLORKEY 透明属性影响子窗口渲染
-        self.handle_win = tk.Toplevel()
+        # handle_win 必须是 root 的子窗口，而非独立顶级窗口。
+        # 独立顶级窗口(Toplevel())会被 Windows 在焦点切换时注册到任务栏，
+        # WS_EX_TOOLWINDOW 和 GWLP_HWNDPARENT 均不可靠。
+        # 作为 root 的子窗口，handle_win 不会出现在任务栏。
+        self.handle_win = tk.Toplevel(self.root)
         self.handle_win.withdraw()
         self.handle_win.overrideredirect(True)
         self.handle_win.attributes("-topmost", True)
@@ -40,18 +43,6 @@ class HandleMixin:
         set_layered_transparent(
             self._handle_hwnd, 255,
             use_colorkey=True, show_taskbar=False)
-
-        # 将 handle_win 的所有者设置为 host_win，防止其作为独立顶级窗口出现在任务栏
-        # 原因：WS_EX_TOOLWINDOW 在 Windows 焦点切换/其他窗口最小化时可能被忽略，
-        #       导致无父独立 Toplevel 被重新注册为任务栏条目。
-        #       设置所有者后 handle_win 不再是顶级窗口，不会独立出现在任务栏。
-        try:
-            GWLP_HWNDPARENT = -8
-            if hasattr(self, '_taskbar_host') and self._taskbar_host and self._taskbar_host._host_hwnd:
-                user32.SetWindowLongW(self._handle_hwnd, GWLP_HWNDPARENT,
-                                      self._taskbar_host._host_hwnd)
-        except Exception:
-            pass
 
         self._set_handle_region(hs)
 
@@ -309,10 +300,14 @@ class HandleMixin:
             self.root.withdraw()
             self.content_win.withdraw()
             self._text_hidden = True
+            # handle_win 是 root 的子窗口，root.withdraw() 可能将其隐藏，
+            # 显式 deiconify 确保手柄保持可见
+            self._deiconify_handle()
         else:
             # 恢复书写框：以手柄为参考的相对位置显示
             self.root.deiconify()
             self.content_win.deiconify()
+            self._deiconify_handle()
 
             # 恢复到之前保存的位置
             if self._hidden_window_geo:
