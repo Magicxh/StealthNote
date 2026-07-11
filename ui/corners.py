@@ -73,30 +73,36 @@ class CornersMixin:
         if self.cfg['invert_mode']:
             color = invert_color(color)
         corner_op = self.cfg['corner_opacity']
-        # 按 raw_bg 混合，与 content_win 的 LWA_ALPHA 统一叠加
+        # 补偿法：抵消 content_win LWA_ALPHA 对框线的二次衰减
         raw_bg = self.cfg['bg_color']
         if self.cfg['invert_mode']:
             raw_bg = invert_color(raw_bg)
-        color = mix_color(color, corner_op, raw_bg)
+        bg_op = max(0.05, self.cfg['bg_opacity'])
+        effective_corner_op = min(1.0, corner_op / max(0.01, bg_op))
+        color = mix_color(color, effective_corner_op, raw_bg)
 
-        half = max(1, lw // 2)
-        line_len = max(1, size - lw)
-        end = half + line_len
-
+        # B17: 重新设计框线公式 —— 线条始终贯穿整个画布，避免小尺寸时重叠或缺失
+        # half 为线宽的中心偏移，线条从画布边缘开始绘制
+        half = max(0, (lw - 1) // 2)
+        # 各角的水平/垂直线均从 0 到 size，确保任意 size/lw 组合下都完整显示
         def draw_corner(canvas, name):
             canvas.delete("all")
             if name == "nw":
-                canvas.create_line(half, half, end, half, fill=color, width=lw)
-                canvas.create_line(half, half, half, end, fill=color, width=lw)
+                # 水平线（顶部）+ 垂直线（左侧）
+                canvas.create_line(0, half, size, half, fill=color, width=lw)
+                canvas.create_line(half, 0, half, size, fill=color, width=lw)
             elif name == "ne":
-                canvas.create_line(size - end, half, size - half, half, fill=color, width=lw)
-                canvas.create_line(size - half, half, size - half, end, fill=color, width=lw)
+                # 水平线（顶部）+ 垂直线（右侧）
+                canvas.create_line(0, half, size, half, fill=color, width=lw)
+                canvas.create_line(size - 1 - half, 0, size - 1 - half, size, fill=color, width=lw)
             elif name == "sw":
-                canvas.create_line(half, size - end, half, size - half, fill=color, width=lw)
-                canvas.create_line(half, size - half, end, size - half, fill=color, width=lw)
+                # 水平线（底部）+ 垂直线（左侧）
+                canvas.create_line(0, size - 1 - half, size, size - 1 - half, fill=color, width=lw)
+                canvas.create_line(half, 0, half, size, fill=color, width=lw)
             elif name == "se":
-                canvas.create_line(size - end, size - half, size - half, size - half, fill=color, width=lw)
-                canvas.create_line(size - half, size - end, size - half, size - half, fill=color, width=lw)
+                # 水平线（底部）+ 垂直线（右侧）
+                canvas.create_line(0, size - 1 - half, size, size - 1 - half, fill=color, width=lw)
+                canvas.create_line(size - 1 - half, 0, size - 1 - half, size, fill=color, width=lw)
 
         for name in self._corner_canvases:
             draw_corner(self._corner_canvases[name], name)

@@ -47,6 +47,7 @@ class SettingsMixin:
         nb.pack(fill="both", expand=True)
 
         self._preview_cfg = copy.deepcopy(self.cfg)
+        self._original_cfg = copy.deepcopy(self.cfg)  # B14: 保存原始配置，供取消时恢复
 
         self._build_tab_system(nb)
         self._build_tab_textbox(nb)
@@ -55,11 +56,12 @@ class SettingsMixin:
 
         btns = ttk.Frame(main)
         btns.pack(fill="x", pady=10)
-        ttk.Button(btns, text="取消", command=self._settings_win.destroy).pack(side="right")
+        ttk.Button(btns, text="取消", command=self._cancel_settings).pack(side="right")
         ttk.Button(btns, text="应用", command=self._apply_settings).pack(side="right", padx=4)
         ttk.Button(btns, text="确定", command=self._ok_settings).pack(side="right", padx=4)
 
         self._settings_win.transient(self.root)
+        self._settings_win.protocol("WM_DELETE_WINDOW", self._cancel_settings)
         self._settings_win.lift()
         self._settings_win.focus_force()
 
@@ -161,9 +163,12 @@ class SettingsMixin:
         self._preview_after_id = self.root.after(30, self._do_refresh_preview)
 
     def _do_refresh_preview(self):
-        """实际执行预览刷新"""
+        """实际执行预览刷新。
+        B14/B15 修复：预览期间保持 _preview_cfg 为当前 cfg，不在 finally 中恢复。
+        原始配置由 _original_cfg 保存，仅在用户点击"取消"时恢复。
+        """
         self._preview_after_id = None
-        old_cfg = self.cfg
+        # 直接使用 _preview_cfg 作为当前 cfg，预览效果持续生效
         self.cfg = self._preview_cfg
         try:
             self._apply_window_style()
@@ -204,17 +209,22 @@ class SettingsMixin:
             self._layout_handle()
         except Exception as e:
             print(f"[预览] 刷新失败: {e}")
-        finally:
-            self.cfg = old_cfg
-            try:
-                self._apply_stealth_state()
-            except Exception:
-                pass
-            # 恢复 cfg 后必须刷新一次仪表盘小红点，避免取消/预览后状态残留
-            try:
-                self._update_panel_button_states()
-            except Exception:
-                pass
+
+    def _cancel_settings(self):
+        """取消设置：恢复原始配置并关闭窗口"""
+        self.cfg = self._original_cfg
+        try:
+            self._apply_window_style()
+            self._apply_text_appearance()
+            self._apply_stealth_state()
+            self._corner_dirty = True
+            self._update_corners()
+            self._update_handle()
+            self._update_panel_button_states()
+            self._set_taskbar_visible(self.cfg['show_taskbar'])
+        except Exception as e:
+            print(f"[取消设置] 恢复失败: {e}")
+        self._settings_win.destroy()
 
     def _build_tab_system(self, nb):
         f = ttk.Frame(nb, padding=12)

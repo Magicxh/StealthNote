@@ -139,6 +139,8 @@ class HandleMixin:
         self.handle_win.update_idletasks()
         self.handle_win.lift()
         self._set_handle_region(hs)
+        # B16: 布局完成后立即更新绘制，确保圆心与窗口裁剪区域一致
+        self._update_handle()
 
     def _update_handle(self):
         self.handle_canvas.delete("all")

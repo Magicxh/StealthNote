@@ -162,6 +162,15 @@ class TextClusterMixin:
         self._create_context_menu()
 
         self.content_win.update_idletasks()
+        # B18: 立即设置 WS_EX_TOOLWINDOW，避免 content_win 出现在任务栏
+        try:
+            _content_hwnd = self.content_win.winfo_id()
+            ex_style = user32.GetWindowLongW(_content_hwnd, GWL_EXSTYLE)
+            ex_style |= WS_EX_TOOLWINDOW
+            ex_style &= ~WS_EX_APPWINDOW
+            user32.SetWindowLongW(_content_hwnd, GWL_EXSTYLE, ex_style)
+        except Exception:
+            pass
         self.content_win.deiconify()
 
         # 内容窗口也需要响应四角缩放与滚轮（根窗口可能被内容窗口遮挡）
@@ -200,12 +209,16 @@ class TextClusterMixin:
         if self.cfg['invert_mode']:
             raw_bg = invert_color(raw_bg)
 
-        # 文字颜色：按原始背景色混合，LWA_ALPHA 统一控制最终透明度
+        # 文字颜色补偿法：content_win 的 LWA_ALPHA 会对整个窗口（含文字）二次衰减，
+        # 最终文字透明度 = effective_fg_op × bg_op。希望最终 = fg_op（仅由 text_opacity 控制），
+        # 所以 effective_fg_op = min(1.0, fg_op / bg_op)，抵消 LWA_ALPHA 的影响。
         tc = self.cfg['text_color']
         if self.cfg['invert_mode']:
             tc = invert_color(tc)
         fg_op = self.cfg['text_opacity']
-        fg_color = mix_color(tc, fg_op, raw_bg)
+        bg_op = max(0.05, self.cfg['bg_opacity'])
+        effective_fg_op = min(1.0, fg_op / max(0.01, bg_op))
+        fg_color = mix_color(tc, effective_fg_op, raw_bg)
 
         # 更醒目的选区颜色
         sel_bg = mix_color("#3399FF", 0.85, raw_bg)
@@ -271,11 +284,13 @@ class TextClusterMixin:
             if self.cfg['invert_mode']:
                 row_bg = invert_color(row_bg)
             read_op = self.cfg['read_bg_opacity']
-            # 按 raw_bg 混合，与 content_win 的 LWA_ALPHA 统一叠加
+            # 补偿法：抵消 content_win LWA_ALPHA 对易读背景的二次衰减
             raw_bg = self.cfg['bg_color']
             if self.cfg['invert_mode']:
                 raw_bg = invert_color(raw_bg)
-            row_bg = mix_color(row_bg, read_op, raw_bg)
+            bg_op = max(0.05, self.cfg['bg_opacity'])
+            effective_read_op = min(1.0, read_op / max(0.01, bg_op))
+            row_bg = mix_color(row_bg, effective_read_op, raw_bg)
 
             for widget in [self.text, getattr(self, 'stealth_text', None)]:
                 if not widget or not widget.winfo_exists():

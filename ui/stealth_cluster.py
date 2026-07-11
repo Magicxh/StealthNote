@@ -89,48 +89,60 @@ class StealthClusterMixin:
         self._save_config_debounced()
 
     def _refresh_stealth_view(self):
-        """根据光标所在行刷新隐写文本框的显示范围与分隔线。
+        """根据光标所在视觉行刷新隐写文本框的显示范围与分隔线。
+
+        B19 修复：使用 dlineinfo("insert") 获取光标所在视觉行的像素位置，
+        直接像素级滚动对齐，解决 word wrap 时光标行不同步上移的问题。
 
         核心逻辑：
-        1. 计算应该显示在顶部的行号（top）
-        2. 用 see(top) 将该行带入可见区域
-        3. 用 dlineinfo 获取该行在控件内的 y 偏移
-        4. 用 yview_scroll 像素级滚动，将 top 行精确对齐到控件顶部
-        5. 不调用 see("insert")，避免与滚动定位冲突导致二次滚动
-
-        三行模式：top = cursor-1（光标行在中间）
-        两行模式：top = cursor-1（光标行在底部）
-        一行模式：top = cursor（仅显示光标行）
+        1. 先 see("insert") 确保光标行可见
+        2. 用 dlineinfo("insert") 获取光标行的视觉 Y 位置和行高
+        3. 根据模式计算目标 Y 位置（光标行应在的 Y 位置）
+           - 一行模式：光标行在顶部 (target_y = 0)
+           - 两行模式：光标行在底部 (target_y = line_height)
+           - 三行模式：光标行在中间 (target_y = line_height * 2)
+        4. 用 yview_scroll 像素级滚动，将光标行精确对齐到目标位置
         """
         if not self.cfg.get('stealth_mode') or not self.stealth_text.winfo_exists():
             return
         try:
             widget = self.stealth_text if self.root.focus_get() == self.stealth_text else self.text
             cur = widget.index("insert")
-            line = int(cur.split(".")[0])
 
             mode = self.cfg['stealth_lines']
-            if mode == 1:
-                top = line
-            elif mode == 2:
-                top = max(1, line - 1)
-            else:  # 3 lines
-                top = max(1, line - 1)
 
-            # Step 1: 将目标 top 行带入可见区域
-            self.stealth_text.see(f"{top}.0")
+            # Step 1: 确保光标行可见
+            self.stealth_text.see("insert")
             self.stealth_text.update_idletasks()
 
-            # Step 2: 像素级微调，将 top 行精确对齐到控件顶部
-            bbox = self.stealth_text.dlineinfo(f"{top}.0")
-            if bbox:
-                y_offset = bbox[1]
-                if y_offset > 0:
-                    self.stealth_text.yview_scroll(y_offset, "pixels")
-                elif y_offset < 0:
-                    self.stealth_text.yview_scroll(y_offset, "pixels")
+            # Step 2: 获取光标所在视觉行的像素位置
+            bbox = self.stealth_text.dlineinfo("insert")
+            if not bbox:
+                self.root.after(20, self._refresh_stealth_view)
+                return
 
-            # 保持光标位置（不调用 see，避免二次滚动）
+            _, y, _, h, _ = bbox
+            line_height = h if h > 0 else 1
+
+            # Step 3: 计算目标 Y 位置（光标行应在的 Y 位置）
+            if mode == 1:
+                # 一行模式：光标行在顶部
+                target_y = 0
+            elif mode == 2:
+                # 两行模式：光标行在底部，上一视觉行在顶部
+                target_y = line_height
+            else:
+                # 三行模式：光标行在中间，上两视觉行在顶部
+                target_y = line_height * 2
+
+            # Step 4: 像素级滚动对齐
+            # delta > 0: 光标行在目标位置下方，需要向下滚动（内容上移）
+            # delta < 0: 光标行在目标位置上方，需要向上滚动（内容下移）
+            delta = y - target_y
+            if abs(delta) > 0:
+                self.stealth_text.yview_scroll(delta, "pixels")
+
+            # 保持光标位置
             self.stealth_text.mark_set("insert", cur)
 
             self.root.after(10, self._update_stealth_line)

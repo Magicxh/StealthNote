@@ -65,6 +65,15 @@ class RootWindowMixin:
         self.root.update_idletasks()
         self._root_hwnd = self.root.winfo_id()
 
+        # B18: 立即设置 WS_EX_TOOLWINDOW，避免 root 窗口在首次 _apply_window_style 前出现在任务栏
+        try:
+            ex_style = user32.GetWindowLongW(self._root_hwnd, GWL_EXSTYLE)
+            ex_style |= WS_EX_TOOLWINDOW
+            ex_style &= ~WS_EX_APPWINDOW
+            user32.SetWindowLongW(self._root_hwnd, GWL_EXSTYLE, ex_style)
+        except Exception:
+            pass
+
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # 绑定窗口事件（根窗口 + 内容窗口双保险，确保四角缩放可命中）

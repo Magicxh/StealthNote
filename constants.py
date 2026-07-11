@@ -7,7 +7,7 @@ import ctypes
 from ctypes import wintypes
 
 APP_NAME = "Stealth Note"
-VERSION = "v2.8.4"
+VERSION = "v2.8.5"
 AUTHOR = "Magicxh & TRAE"
 CONTACT_EMAIL = "17296509@qq.com"
 
