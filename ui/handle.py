@@ -241,7 +241,13 @@ class HandleMixin:
             return
         x = event.x_root - self._drag_dx
         y = event.y_root - self._drag_dy
-        self.root.geometry(f"+{x}+{y}")
+        if getattr(self, '_text_hidden', False):
+            # B31: 隐藏状态下拖动手柄，更新保存的窗口位置
+            if self._hidden_window_geo:
+                w, h = self._hidden_window_geo[2], self._hidden_window_geo[3]
+                self._hidden_window_geo = (x, y, w, h)
+        else:
+            self.root.geometry(f"+{x}+{y}")
         self._layout_handle()
 
     def _on_handle_release(self, event):

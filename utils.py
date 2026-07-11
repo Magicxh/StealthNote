@@ -42,6 +42,16 @@ def clamp(value, min_val, max_val):
     return max(min_val, min(max_val, value))
 
 
+def color_to_bgr_int(hex_color):
+    """将 #RRGGBB 转换为 BGR 格式的整数（用于 SetLayeredWindowAttributes 的 crKey 参数）"""
+    try:
+        c = hex_color.lstrip('#')
+        r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+        return (b << 16) | (g << 8) | r
+    except Exception:
+        return 0x00010101
+
+
 def detect_encoding(file_path):
     """检测文件编码"""
     try:

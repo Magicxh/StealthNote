@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import font as tkfont
 from constants import *
-from utils import mix_color, clamp, invert_color
+from utils import mix_color, clamp, invert_color, color_to_bgr_int
 
 class TextClusterMixin:
     """文本框集群 Mixin：文本框、滚动条、外观"""
@@ -42,10 +42,10 @@ class TextClusterMixin:
         self.content_win = tk.Toplevel(self.root)
         self.content_win.withdraw()
         self.content_win.overrideredirect(True)
-        self.content_win.configure(bg=COLORKEY, bd=0, highlightthickness=0)
+        self.content_win.configure(bg=raw_bg, bd=0, highlightthickness=0)
         self.content_win.attributes("-topmost", True)
 
-        self.content_frame = tk.Frame(self.content_win, bg=COLORKEY, bd=0, highlightthickness=0)
+        self.content_frame = tk.Frame(self.content_win, bg=raw_bg, bd=0, highlightthickness=0)
         self.content_frame.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
         # ===== 四角框线画布和热区 =====
@@ -63,14 +63,14 @@ class TextClusterMixin:
 
         for name, cursor in corners:
             # 热区：仅保留角落 14x14，用于触发缩放
-            frame = tk.Frame(self.content_frame, bg=COLORKEY, bd=0, highlightthickness=0)
+            frame = tk.Frame(self.content_frame, bg=raw_bg, bd=0, highlightthickness=0)
             frame.bind("<ButtonPress-1>", lambda e, n=name: self._on_resize_start(e, n))
             frame.bind("<B1-Motion>", self._on_resize)
             frame.bind("<ButtonRelease-1>", self._on_resize_end)
             frame.bind("<Motion>", self._on_content_motion)
 
             # 视觉画布：独立绘制单个角的框线
-            canvas = tk.Canvas(self.content_frame, bg=COLORKEY, highlightthickness=0, bd=0, cursor=cursor)
+            canvas = tk.Canvas(self.content_frame, bg=raw_bg, highlightthickness=0, bd=0, cursor=cursor)
             canvas.bind("<ButtonPress-1>", lambda e, n=name: self._on_resize_start(e, n))
             canvas.bind("<B1-Motion>", self._on_resize)
             canvas.bind("<ButtonRelease-1>", self._on_resize_end)
@@ -79,12 +79,12 @@ class TextClusterMixin:
             self._corner_frames[name] = frame
             self._corner_canvases[name] = canvas
 
-        self.text_container = tk.Frame(self.content_frame, bg=COLORKEY, bd=0, highlightthickness=0)
+        self.text_container = tk.Frame(self.content_frame, bg=raw_bg, bd=0, highlightthickness=0)
         self.text_container.pack(fill="both", expand=True, padx=TEXT_PAD_X, pady=TEXT_PAD_Y)
 
         self.text = tk.Text(
             self.text_container,
-            bg=COLORKEY,
+            bg=raw_bg,
             fg="#FFFFFF",
             insertbackground="#FFFFFF",
             selectbackground="#3399FF",
@@ -103,13 +103,13 @@ class TextClusterMixin:
 
         # ===== 隐写框集群 =====
         # 隐写容器：独立于文本框容器，切换模式时显示/隐藏
-        self.stealth_container = tk.Frame(self.content_frame, bg=COLORKEY, bd=0, highlightthickness=0)
+        self.stealth_container = tk.Frame(self.content_frame, bg=raw_bg, bd=0, highlightthickness=0)
 
         # 隐写文本框：无框，继承普通文本框样式，宽度填充，高度由行数决定
         # 垂直内边距设为 0，确保 winfo_reqheight / metrics 能精确对应行数
         self.stealth_text = tk.Text(
             self.stealth_container,
-            bg=COLORKEY,
+            bg=raw_bg,
             fg="#FFFFFF",
             insertbackground="#FFFFFF",
             selectbackground="#3399FF",
@@ -142,11 +142,11 @@ class TextClusterMixin:
         self._normal_window_height = None
 
         # 自定义滚动条
-        self.sb_container = tk.Frame(self.content_frame, bg=COLORKEY, bd=0, highlightthickness=0,
+        self.sb_container = tk.Frame(self.content_frame, bg=raw_bg, bd=0, highlightthickness=0,
                                      width=SCROLLBAR_WIDTH + SCROLLBAR_PAD_RIGHT * 2)
         self.sb_container.place(relx=1.0, rely=0.0, anchor="ne", x=0, y=0, relheight=1.0)
 
-        self._sb_canvas = tk.Canvas(self.sb_container, bg=COLORKEY, highlightthickness=0, bd=0,
+        self._sb_canvas = tk.Canvas(self.sb_container, bg=raw_bg, highlightthickness=0, bd=0,
                                     width=SCROLLBAR_WIDTH)
         self._sb_canvas.pack(side="right", fill="y", padx=(0, SCROLLBAR_PAD_RIGHT))
 
@@ -195,13 +195,25 @@ class TextClusterMixin:
             ex_style |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex_style &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(_content_hwnd, GWL_EXSTYLE, ex_style)
-            # LWA_COLORKEY only — 无 LWA_ALPHA，文字不受窗口 alpha 衰减
-            user32.SetLayeredWindowAttributes(_content_hwnd, COLORKEY_INT, 255, LWA_COLORKEY)
+            # LWA_COLORKEY only — COLORKEY=raw_bg（动态），文字不受窗口 alpha 衰减
+            # 抗锯齿相对于 raw_bg，无毛边；raw_bg 被 COLORKEY 透明，让 bg_win 透过
+            user32.SetLayeredWindowAttributes(_content_hwnd, color_to_bgr_int(raw_bg), 255, LWA_COLORKEY)
         except Exception:
             pass
         self.content_win.deiconify()
         self.bg_win.deiconify()
         self.bg_win.lower()  # 确保背景窗口在内容窗口之下
+        # B28: 同步 bg_win 和 content_win 的初始位置和大小与 root 一致
+        try:
+            ww = max(MIN_WINDOW_W, self.root.winfo_width())
+            wh = max(MIN_WINDOW_H, self.root.winfo_height())
+            wx = self.root.winfo_x()
+            wy = self.root.winfo_y()
+            self.bg_win.geometry(f"{ww}x{wh}+{wx}+{wy}")
+            self.content_win.geometry(f"{ww}x{wh}+{wx}+{wy}")
+            self.bg_win.lower()
+        except Exception:
+            pass
 
         # 内容窗口也需要响应四角缩放与滚轮（根窗口可能被内容窗口遮挡）
         self.content_win.bind("<ButtonPress-1>", self._on_content_button_press)
@@ -261,9 +273,10 @@ class TextClusterMixin:
         sel_bg = mix_color("#3399FF", 0.85, raw_bg)
         sel_fg = "#FFFFFF"
 
-        # 文本框背景：COLORKEY（透明），背景由 bg_win 负责
-        text_bg = COLORKEY
-        stealth_bg = COLORKEY
+        # 文本框背景：raw_bg（被 content_win 的动态 COLORKEY 透明，让 bg_win 透过）
+        # 抗锯齿相对于 raw_bg，无毛边
+        text_bg = raw_bg
+        stealth_bg = raw_bg
 
         self.text.configure(
             bg=text_bg,
@@ -283,11 +296,11 @@ class TextClusterMixin:
                 font=(self.cfg['text_font'], self.cfg['text_size'])
             )
 
-        # 容器背景：COLORKEY（透明）
+        # 容器背景：raw_bg（被动态 COLORKEY 透明）
         if hasattr(self, 'text_container') and self.text_container:
-            self.text_container.configure(bg=COLORKEY)
+            self.text_container.configure(bg=raw_bg)
         if hasattr(self, 'stealth_container') and self.stealth_container:
-            self.stealth_container.configure(bg=COLORKEY)
+            self.stealth_container.configure(bg=raw_bg)
 
         # 易读模式背景
         if self.cfg['read_mode']:

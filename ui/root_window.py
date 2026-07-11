@@ -2,7 +2,7 @@
 """Stealth Note - 窗口管理模块（RootWindowMixin）"""
 import tkinter as tk
 from constants import *
-from utils import set_layered_transparent
+from utils import set_layered_transparent, color_to_bgr_int
 
 class RootWindowMixin:
     """窗口管理 Mixin：创建、样式、同步、任务栏"""
@@ -28,6 +28,9 @@ class RootWindowMixin:
             self.content_win.attributes("-topmost", self.cfg['topmost'])
         ))
         self.handle_win.lift()
+        # B30: 仪表盘跟随焦点（与手柄同层级，不设 topmost）
+        if self.cfg.get('show_panel') and hasattr(self, 'panel') and self.panel:
+            self.panel.lift()
 
     # -------------------------------------------------------------------------
     # 主窗口
@@ -133,8 +136,8 @@ class RootWindowMixin:
             ex2 |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex2 &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(self._content_hwnd, GWL_EXSTYLE, ex2)
-            # LWA_COLORKEY only — alpha=255（不透明），文字不受窗口 alpha 衰减
-            user32.SetLayeredWindowAttributes(self._content_hwnd, COLORKEY_INT, 255, LWA_COLORKEY)
+            # LWA_COLORKEY only — COLORKEY=raw_bg（动态），文字不受窗口 alpha 衰减
+            user32.SetLayeredWindowAttributes(self._content_hwnd, color_to_bgr_int(raw_bg), 255, LWA_COLORKEY)
             user32.SetWindowPos(self._content_hwnd, 0, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 

@@ -14,6 +14,7 @@ class CornersMixin:
         self._layout_corners()
 
     def _layout_all(self):
+        self._sync_content_window()
         self._layout_corners()
         self._layout_handle()
         self._update_handle()

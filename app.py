@@ -85,11 +85,11 @@ class StealthNoteApp(
         self._init_shortcuts()
 
         # 应用初始样式
+        self.root.deiconify()
         self._apply_window_style()
         self._apply_text_appearance()
         self.root.after(100, self._layout_all)
 
-        self.root.deiconify()
         self.root.lift()
         self._window_visible = True
 
@@ -286,6 +286,8 @@ class StealthNoteApp(
         if self.cfg['show_panel']:
             self.panel.deiconify()
         self._window_visible = True
+        # B29: deiconify 后重新设置窗口样式，防止 WS_EX_TOOLWINDOW 被重置导致任务栏双窗口
+        self._apply_window_style()
         # B26: 如果书写框被双击隐藏，恢复时保持隐藏
         if getattr(self, '_text_hidden', False):
             self.root.withdraw()

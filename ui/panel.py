@@ -184,6 +184,7 @@ class PanelMixin:
 
     def toggle_invert(self):
         self.cfg['invert_mode'] = not self.cfg['invert_mode']
+        self._apply_window_style()
         self._apply_text_appearance()
         self._corner_dirty = True
         self._update_corners()
