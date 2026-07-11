@@ -12,6 +12,12 @@ dist/
 # 运行时配置（用户本地生成）
 stealth_note_config.json
 
+# 历史版本备份
+历史版本/
+
+# 参考文档
+参考文档/
+
 # IDE
 .vscode/
 .idea/
@@ -22,3 +28,7 @@ stealth_note_config.json
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# 临时文件
+*.log
+*.tmp
