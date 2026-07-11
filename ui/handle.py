@@ -41,6 +41,18 @@ class HandleMixin:
             self._handle_hwnd, 255,
             use_colorkey=True, show_taskbar=False)
 
+        # 将 handle_win 的所有者设置为 host_win，防止其作为独立顶级窗口出现在任务栏
+        # 原因：WS_EX_TOOLWINDOW 在 Windows 焦点切换/其他窗口最小化时可能被忽略，
+        #       导致无父独立 Toplevel 被重新注册为任务栏条目。
+        #       设置所有者后 handle_win 不再是顶级窗口，不会独立出现在任务栏。
+        try:
+            GWLP_HWNDPARENT = -8
+            if hasattr(self, '_taskbar_host') and self._taskbar_host and self._taskbar_host._host_hwnd:
+                user32.SetWindowLongW(self._handle_hwnd, GWLP_HWNDPARENT,
+                                      self._taskbar_host._host_hwnd)
+        except Exception:
+            pass
+
         self._set_handle_region(hs)
 
         self.root.after(200, self._show_handle)

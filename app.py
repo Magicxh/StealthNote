@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stealth Note v2.9.4 - 主应用类"""
+"""Stealth Note v2.9.5 - 主应用类"""
 
 import os
 import sys
