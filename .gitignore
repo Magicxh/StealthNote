@@ -7,7 +7,6 @@ __pycache__/
 # PyInstaller 构建产物
 build/
 dist/
-*.spec
 
 # 运行时配置（用户本地生成）
 stealth_note_config.json
