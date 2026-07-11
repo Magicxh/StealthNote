@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stealth Note v2.8.3 - 主应用类"""
+"""Stealth Note v2.8.4 - 主应用类"""
 
 import os
 import sys
@@ -312,27 +312,46 @@ class StealthNoteApp(
     # 退出
     # -------------------------------------------------------------------------
 
+    def _tray_toggle(self):
+        """切换窗口显示/隐藏（托盘和手柄菜单共用）"""
+        if self._window_visible:
+            self._hide_window()
+        else:
+            self._show_window()
+
+    def _show_about(self):
+        messagebox.showinfo(f"{APP_NAME} {VERSION}",
+                            f"{APP_NAME} {VERSION}\n\n作者：{AUTHOR}\n邮箱：{CONTACT_EMAIL}\n\n完全透明的记事本工具")
+
     def _on_close(self):
         """窗口关闭事件"""
-        self.exit_app()
+        if self.cfg.get('show_taskbar', True):
+            self.exit_app()
+        else:
+            self._tray_toggle()
 
     def exit_app(self):
         if self._check_save_before_close():
             return
+        try:
+            if self._window_visible:
+                self.cfg['window_width'] = self.root.winfo_width()
+                self.cfg['window_height'] = self.root.winfo_height()
+                self.cfg['window_x'] = self.root.winfo_x()
+                self.cfg['window_y'] = self.root.winfo_y()
+            self._do_save_config()
+        except Exception:
+            pass
         try:
             if hasattr(self, '_tray') and self._tray:
                 self._tray.stop()
         except Exception:
             pass
         try:
-            self._save_config_debounced()
-            self._do_save_config()
-        except Exception:
-            pass
-        try:
             self.root.destroy()
         except Exception:
             pass
+        sys.exit(0)
 
     def run(self):
         try:
