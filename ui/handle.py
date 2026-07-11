@@ -121,8 +121,13 @@ class HandleMixin:
         self.handle_win.geometry(f"{hs}x{hs}")
         self.handle_canvas.configure(width=hs, height=hs)
 
-        wx = self.root.winfo_x()
-        wy = self.root.winfo_y()
+        # 隐藏状态下用保存的窗口位置（root 已 withdraw，winfo 返回旧值）
+        if getattr(self, '_text_hidden', False) and self._hidden_window_geo:
+            wx = self._hidden_window_geo[0]
+            wy = self._hidden_window_geo[1]
+        else:
+            wx = self.root.winfo_x()
+            wy = self.root.winfo_y()
         size = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size']))
         r = size // 2
 
@@ -140,7 +145,7 @@ class HandleMixin:
         self.handle_win.update_idletasks()
         self.handle_win.lift()
         self._set_handle_region(hs)
-        # B16: 布局完成后立即更新绘制，确保圆心与窗口裁剪区域一致
+        # 布局完成后立即更新绘制，确保圆心与窗口裁剪区域一致
         self._update_handle()
 
     def _update_handle(self):
@@ -223,17 +228,12 @@ class HandleMixin:
             pass
         self.root.attributes("-topmost", True)
         self.content_win.attributes("-topmost", True)
-        if hasattr(self, 'bg_win') and self.bg_win:
-            self.bg_win.attributes("-topmost", True)
         self.root.after(50, lambda: (
             self.root.attributes("-topmost", self.cfg['topmost']),
             self.content_win.attributes("-topmost", self.cfg['topmost'])
         ))
         self.root.lift()
         self.content_win.lift()
-        if hasattr(self, 'bg_win') and self.bg_win:
-            self.bg_win.lift()
-            self.bg_win.lower()
         self.handle_win.lift()
 
     def _on_handle_drag(self, event):
@@ -242,13 +242,14 @@ class HandleMixin:
         x = event.x_root - self._drag_dx
         y = event.y_root - self._drag_dy
         if getattr(self, '_text_hidden', False):
-            # B31: 隐藏状态下拖动手柄，更新保存的窗口位置
+            # 隐藏状态下拖动手柄：更新保存的窗口位置
             if self._hidden_window_geo:
                 w, h = self._hidden_window_geo[2], self._hidden_window_geo[3]
                 self._hidden_window_geo = (x, y, w, h)
+            self._layout_handle()
         else:
             self.root.geometry(f"+{x}+{y}")
-        self._layout_handle()
+            self._layout_handle()
 
     def _on_handle_release(self, event):
         if self._drag_active:
@@ -281,16 +282,11 @@ class HandleMixin:
                 self.root.winfo_height()
             )
             self.root.withdraw()
-            if hasattr(self, 'bg_win') and self.bg_win:
-                self.bg_win.withdraw()
             self.content_win.withdraw()
             self._text_hidden = True
         else:
             # 恢复书写框：以手柄为参考的相对位置显示
             self.root.deiconify()
-            if hasattr(self, 'bg_win') and self.bg_win:
-                self.bg_win.deiconify()
-                self.bg_win.lower()
             self.content_win.deiconify()
 
             # 恢复到之前保存的位置
@@ -298,9 +294,6 @@ class HandleMixin:
                 x, y, w, h = self._hidden_window_geo
                 self.root.geometry(f"{w}x{h}+{x}+{y}")
                 self.content_win.geometry(f"{w}x{h}+{x}+{y}")
-                if hasattr(self, 'bg_win') and self.bg_win:
-                    self.bg_win.geometry(f"{w}x{h}+{x}+{y}")
-                    self.bg_win.lower()
 
             self._sync_content_window()
             self._text_hidden = False

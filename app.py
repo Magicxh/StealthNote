@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stealth Note v2.9.0 - 主应用类"""
+"""Stealth Note v2.9.2 - 主应用类"""
 
 import os
 import sys
@@ -278,21 +278,16 @@ class StealthNoteApp(
 
     def _show_window(self):
         self.root.deiconify()
-        if hasattr(self, 'bg_win') and self.bg_win:
-            self.bg_win.deiconify()
-            self.bg_win.lower()
         self.content_win.deiconify()
         self.handle_win.deiconify()
         if self.cfg['show_panel']:
             self.panel.deiconify()
         self._window_visible = True
-        # B29: deiconify 后重新设置窗口样式，防止 WS_EX_TOOLWINDOW 被重置导致任务栏双窗口
+        # deiconify 后重新设置窗口样式，防止 WS_EX_TOOLWINDOW 被重置导致任务栏双窗口
         self._apply_window_style()
-        # B26: 如果书写框被双击隐藏，恢复时保持隐藏
+        # 如果书写框被双击隐藏，恢复时保持隐藏
         if getattr(self, '_text_hidden', False):
             self.root.withdraw()
-            if hasattr(self, 'bg_win') and self.bg_win:
-                self.bg_win.withdraw()
             self.content_win.withdraw()
         else:
             self._sync_content_window()
@@ -305,8 +300,6 @@ class StealthNoteApp(
 
     def _hide_window(self):
         self.root.withdraw()
-        if hasattr(self, 'bg_win') and self.bg_win:
-            self.bg_win.withdraw()
         self.content_win.withdraw()
         self.handle_win.withdraw()
         if self.cfg['show_panel']:

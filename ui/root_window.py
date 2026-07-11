@@ -2,7 +2,7 @@
 """Stealth Note - 窗口管理模块（RootWindowMixin）"""
 import tkinter as tk
 from constants import *
-from utils import set_layered_transparent, color_to_bgr_int
+from utils import set_layered_transparent
 
 class RootWindowMixin:
     """窗口管理 Mixin：创建、样式、同步、任务栏"""
@@ -16,19 +16,14 @@ class RootWindowMixin:
             pass
         self.root.attributes("-topmost", True)
         self.content_win.attributes("-topmost", True)
-        if hasattr(self, 'bg_win') and self.bg_win:
-            self.bg_win.attributes("-topmost", True)
         self.root.lift()
         self.content_win.lift()
-        if hasattr(self, 'bg_win') and self.bg_win:
-            self.bg_win.lift()
-            self.bg_win.lower()
         self.root.after(80, lambda: (
             self.root.attributes("-topmost", self.cfg['topmost']),
             self.content_win.attributes("-topmost", self.cfg['topmost'])
         ))
         self.handle_win.lift()
-        # B30: 仪表盘跟随焦点（与手柄同层级，不设 topmost）
+        # 仪表盘跟随焦点（与手柄同层级，不设 topmost）
         if self.cfg.get('show_panel') and hasattr(self, 'panel') and self.panel:
             self.panel.lift()
 
@@ -91,21 +86,22 @@ class RootWindowMixin:
         self.root.bind("<Configure>", self._on_window_configure)
 
     def _apply_window_style(self):
-        """B20: 分离背景窗口和内容窗口的透明属性。
+        """应用窗口透明样式（v2.7.3 双层架构）。
 
-        - bg_win: LWA_ALPHA，alpha = bg_opacity，背景色 = raw_bg
-        - content_win: LWA_COLORKEY only（无 LWA_ALPHA），背景透明
-        - 易读模式下 bg_win alpha=0（完全透明）
+        - root: LWA_COLORKEY only，crKey=COLORKEY(#010101)，alpha=255 → COLORKEY 区域穿透
+        - content_win: LWA_ALPHA | LWA_COLORKEY，crKey=COLORKEY，alpha=bg_op*255 → 整体半透明
+        - 易读模式下 content_win alpha=0（完全透明），由 Text tag 显示行背景
+        - Text bg=raw_bg 实色，原生交互顺滑，抗锯齿相对于 raw_bg 无毛边
         """
         try:
-            bg_op = max(0.0, self.cfg['bg_opacity'])
+            bg_op = max(0.05, self.cfg['bg_opacity'])
 
             # 计算实际背景色（含反色）
             raw_bg = self.cfg['bg_color']
             if self.cfg['invert_mode']:
                 raw_bg = invert_color(raw_bg)
 
-            # ===== root 窗口：COLORKEY only =====
+            # ===== root 窗口：LWA_COLORKEY only =====
             self.root.attributes("-transparentcolor", COLORKEY)
             ex_style = user32.GetWindowLongW(self._root_hwnd, GWL_EXSTYLE)
             ex_style |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
@@ -115,29 +111,22 @@ class RootWindowMixin:
             user32.SetWindowPos(self._root_hwnd, 0, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
-            # ===== bg_win 背景窗口：LWA_ALPHA 控制背景透明度 =====
-            if hasattr(self, 'bg_win') and self.bg_win and self.bg_win.winfo_exists():
-                # 更新背景色
-                self.bg_win.configure(bg=raw_bg)
-                # 易读模式下背景完全透明
-                if self.cfg['read_mode']:
-                    effective_bg_op = 0.0
-                else:
-                    effective_bg_op = bg_op
-                if not hasattr(self, '_bg_hwnd') or not self._bg_hwnd:
-                    self._bg_hwnd = self.bg_win.winfo_id()
-                user32.SetLayeredWindowAttributes(
-                    self._bg_hwnd, 0, int(max(0.0, effective_bg_op) * 255), LWA_ALPHA)
-
-            # ===== content_win 内容窗口：LWA_COLORKEY only（无 LWA_ALPHA） =====
+            # ===== content_win 内容窗口：LWA_ALPHA | LWA_COLORKEY =====
             if not hasattr(self, '_content_hwnd') or not self._content_hwnd:
                 self._content_hwnd = self.content_win.winfo_id()
             ex2 = user32.GetWindowLongW(self._content_hwnd, GWL_EXSTYLE)
             ex2 |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex2 &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(self._content_hwnd, GWL_EXSTYLE, ex2)
-            # LWA_COLORKEY only — COLORKEY=raw_bg（动态），文字不受窗口 alpha 衰减
-            user32.SetLayeredWindowAttributes(self._content_hwnd, color_to_bgr_int(raw_bg), 255, LWA_COLORKEY)
+            # 易读模式下背景完全透明
+            if self.cfg['read_mode']:
+                effective_bg_op = 0.0
+            else:
+                effective_bg_op = bg_op
+            # LWA_ALPHA | LWA_COLORKEY：alpha 控制整体半透明，COLORKEY(#010101) 穿透
+            user32.SetLayeredWindowAttributes(
+                self._content_hwnd, COLORKEY_INT, int(max(0.0, effective_bg_op) * 255),
+                LWA_ALPHA | LWA_COLORKEY)
             user32.SetWindowPos(self._content_hwnd, 0, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
@@ -145,15 +134,11 @@ class RootWindowMixin:
             if self.cfg['topmost']:
                 self.root.attributes("-topmost", True)
                 self.content_win.attributes("-topmost", True)
-                if hasattr(self, 'bg_win') and self.bg_win:
-                    self.bg_win.attributes("-topmost", True)
                 if hasattr(self, 'handle_win') and self.handle_win:
                     self.handle_win.attributes("-topmost", True)
             else:
                 self.root.attributes("-topmost", False)
                 self.content_win.attributes("-topmost", False)
-                if hasattr(self, 'bg_win') and self.bg_win:
-                    self.bg_win.attributes("-topmost", False)
                 if hasattr(self, 'handle_win') and self.handle_win:
                     self.handle_win.attributes("-topmost", False)
 
@@ -183,7 +168,7 @@ class RootWindowMixin:
             self._resize_after_id = self.root.after(30, self._on_window_resized)
 
     def _sync_content_window(self):
-        """同步内容窗口和背景窗口与根窗口的位置和大小"""
+        """同步内容窗口与根窗口的位置和大小"""
         try:
             if hasattr(self, 'content_win') and self.content_win and self.content_win.winfo_exists():
                 x = self.root.winfo_x()
@@ -191,14 +176,6 @@ class RootWindowMixin:
                 w = self.root.winfo_width()
                 h = self.root.winfo_height()
                 self.content_win.geometry(f"{w}x{h}+{x}+{y}")
-            # B20: 同步背景窗口
-            if hasattr(self, 'bg_win') and self.bg_win and self.bg_win.winfo_exists():
-                x = self.root.winfo_x()
-                y = self.root.winfo_y()
-                w = self.root.winfo_width()
-                h = self.root.winfo_height()
-                self.bg_win.geometry(f"{w}x{h}+{x}+{y}")
-                self.bg_win.lower()
         except Exception as e:
             print(f"[同步内容窗口] 失败: {e}")
 

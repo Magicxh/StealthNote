@@ -3,42 +3,18 @@
 import tkinter as tk
 from tkinter import font as tkfont
 from constants import *
-from utils import mix_color, clamp, invert_color, color_to_bgr_int
+from utils import mix_color, clamp, invert_color
 
 class TextClusterMixin:
     """文本框集群 Mixin：文本框、滚动条、外观"""
 
     def _init_content(self):
-        """B20: 分离背景窗口架构。
-
-        - bg_win: LWA_ALPHA，仅显示半透明背景色，alpha = bg_opacity
-        - content_win: LWA_COLORKEY only（无 LWA_ALPHA），背景透明，
-          文字/框线通过 mix_color 预乘透明度，不被 LWA_ALPHA 二次衰减。
-
-        背景透明度和文字透明度完全独立控制，互不影响。
-        背景颜色作为独立变量存储在 bg_win，为后续屏幕选色匹配功能预留接口。
-        """
+        """初始化内容层窗口：content_win 使用 LWA_ALPHA | LWA_COLORKEY 统一半透明，
+        所有子元素 bg=raw_bg 实色，保证文本交互顺滑且无黑底色差。
+        关键：四角画布/热区在文本容器之前创建，确保天然位于文本之下，不会遮挡文字。"""
         raw_bg = self.cfg['bg_color']
 
-        # ===== 背景窗口 bg_win：LWA_ALPHA 控制背景透明度 =====
-        self.bg_win = tk.Toplevel(self.root)
-        self.bg_win.withdraw()
-        self.bg_win.overrideredirect(True)
-        self.bg_win.configure(bg=raw_bg, bd=0, highlightthickness=0)
-        self.bg_win.attributes("-topmost", True)
-        self.bg_win.update_idletasks()
-        self._bg_hwnd = self.bg_win.winfo_id()
-        try:
-            ex_bg = user32.GetWindowLongW(self._bg_hwnd, GWL_EXSTYLE)
-            ex_bg |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
-            ex_bg &= ~WS_EX_APPWINDOW
-            user32.SetWindowLongW(self._bg_hwnd, GWL_EXSTYLE, ex_bg)
-            user32.SetLayeredWindowAttributes(self._bg_hwnd, 0,
-                                              int(self.cfg['bg_opacity'] * 255), LWA_ALPHA)
-        except Exception:
-            pass
-
-        # ===== 内容窗口 content_win：LWA_COLORKEY only（无 LWA_ALPHA） =====
+        # ===== 内容窗口 content_win：LWA_ALPHA | LWA_COLORKEY =====
         self.content_win = tk.Toplevel(self.root)
         self.content_win.withdraw()
         self.content_win.overrideredirect(True)
@@ -188,32 +164,19 @@ class TextClusterMixin:
         self._create_context_menu()
 
         self.content_win.update_idletasks()
-        # B18/B20: 立即设置 WS_EX_TOOLWINDOW + LWA_COLORKEY only（无 LWA_ALPHA）
+        # 立即设置 WS_EX_TOOLWINDOW + LWA_ALPHA | LWA_COLORKEY
         try:
             _content_hwnd = self.content_win.winfo_id()
             ex_style = user32.GetWindowLongW(_content_hwnd, GWL_EXSTYLE)
             ex_style |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex_style &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(_content_hwnd, GWL_EXSTYLE, ex_style)
-            # LWA_COLORKEY only — COLORKEY=raw_bg（动态），文字不受窗口 alpha 衰减
-            # 抗锯齿相对于 raw_bg，无毛边；raw_bg 被 COLORKEY 透明，让 bg_win 透过
-            user32.SetLayeredWindowAttributes(_content_hwnd, color_to_bgr_int(raw_bg), 255, LWA_COLORKEY)
+            # LWA_ALPHA | LWA_COLORKEY：alpha 控制整体半透明，COLORKEY(#010101) 穿透
+            # Text bg=raw_bg 实色，原生交互顺滑，抗锯齿相对于 raw_bg 无毛边
+            user32.SetLayeredWindowAttributes(_content_hwnd, COLORKEY_INT, 255, LWA_ALPHA | LWA_COLORKEY)
         except Exception:
             pass
         self.content_win.deiconify()
-        self.bg_win.deiconify()
-        self.bg_win.lower()  # 确保背景窗口在内容窗口之下
-        # B28: 同步 bg_win 和 content_win 的初始位置和大小与 root 一致
-        try:
-            ww = max(MIN_WINDOW_W, self.root.winfo_width())
-            wh = max(MIN_WINDOW_H, self.root.winfo_height())
-            wx = self.root.winfo_x()
-            wy = self.root.winfo_y()
-            self.bg_win.geometry(f"{ww}x{wh}+{wx}+{wy}")
-            self.content_win.geometry(f"{ww}x{wh}+{wx}+{wy}")
-            self.bg_win.lower()
-        except Exception:
-            pass
 
         # 内容窗口也需要响应四角缩放与滚轮（根窗口可能被内容窗口遮挡）
         self.content_win.bind("<ButtonPress-1>", self._on_content_button_press)
@@ -245,24 +208,23 @@ class TextClusterMixin:
             return bg
 
     def _apply_text_appearance(self):
-        """B20: 应用文本外观设置。
+        """应用文本外观设置（v2.7.3 双层架构）。
 
-        content_win 使用 LWA_COLORKEY only（无 LWA_ALPHA），背景透明。
-        文字颜色直接通过 mix_color 预乘 text_opacity，不被 LWA_ALPHA 二次衰减。
-        背景颜色和透明度由 bg_win 独立控制（在 _apply_window_style 中设置）。
+        content_win 使用 LWA_ALPHA | LWA_COLORKEY 统一半透明。
+        文字颜色通过 mix_color 预乘 text_opacity，背景透明度由 content_win 的 LWA_ALPHA 控制。
         """
-        # B22: 保存当前滚动位置，防止 configure 时重置
+        # 保存当前滚动位置，防止 configure 时重置
         try:
             scroll_pos = self.text.yview()
         except Exception:
             scroll_pos = (0.0, 1.0)
 
-        # 原始背景色（用于 mix_color 混合参考，实际背景由 bg_win 显示）
+        # 原始背景色（content_win 的 LWA_ALPHA 负责实际半透明）
         raw_bg = self.cfg['bg_color']
         if self.cfg['invert_mode']:
             raw_bg = invert_color(raw_bg)
 
-        # 文字颜色：直接预乘 text_opacity，无 LWA_ALPHA 二次衰减
+        # 文字颜色：预乘 text_opacity
         tc = self.cfg['text_color']
         if self.cfg['invert_mode']:
             tc = invert_color(tc)
@@ -273,7 +235,7 @@ class TextClusterMixin:
         sel_bg = mix_color("#3399FF", 0.85, raw_bg)
         sel_fg = "#FFFFFF"
 
-        # 文本框背景：raw_bg（被 content_win 的动态 COLORKEY 透明，让 bg_win 透过）
+        # 文本框背景：raw_bg 实色（content_win 的 LWA_ALPHA 控制透明度）
         # 抗锯齿相对于 raw_bg，无毛边
         text_bg = raw_bg
         stealth_bg = raw_bg
@@ -320,7 +282,6 @@ class TextClusterMixin:
             if abs(new_h - self.root.winfo_height()) > 2:
                 self.root.geometry(f"{ww}x{new_h}")
                 self.content_win.geometry(f"{ww}x{new_h}")
-                self.bg_win.geometry(f"{ww}x{new_h}")
                 self._corner_dirty = True
                 self._update_corners()
                 self._layout_handle()
@@ -335,17 +296,15 @@ class TextClusterMixin:
             pass
 
     def _apply_read_mode_bg(self):
-        """B20/B24: 易读模式 — 仅在有文字的行显示背景色。
+        """易读模式 — 仅在有文字的行显示背景色。
 
-        content_win 背景为 COLORKEY（透明），易读背景通过 Text tag 实现。
-        颜色直接预乘 read_bg_opacity，无 LWA_ALPHA 二次衰减。
+        content_win 的 LWA_ALPHA 设为 0（完全透明），易读背景通过 Text tag 实现。
         """
         try:
             row_bg = self.cfg['read_bg_color']
             if self.cfg['invert_mode']:
                 row_bg = invert_color(row_bg)
             read_op = self.cfg['read_bg_opacity']
-            # 直接预乘，无补偿法（content_win 无 LWA_ALPHA）
             raw_bg = self.cfg['bg_color']
             if self.cfg['invert_mode']:
                 raw_bg = invert_color(raw_bg)
