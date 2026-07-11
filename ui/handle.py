@@ -2,49 +2,46 @@
 """Stealth Note - 控制手柄模块（HandleMixin）"""
 import tkinter as tk
 from constants import *
-from utils import mix_color, set_layered_transparent, invert_color
+from utils import mix_color, invert_color
 
 
 class HandleMixin:
-    """控制手柄 Mixin：创建、渲染、热点、拖动、滚轮"""
+    """控制手柄 Mixin：创建、渲染、热点、拖动、滚轮
+
+    v2.9.7 重构：手柄从独立 Toplevel 窗口改为 root 上的 Canvas 控件，
+    彻底消除任务栏双窗口问题。root 窗口向左扩展以容纳手柄区域。
+    """
+
+    # -------------------------------------------------------------------------
+    # 手柄尺寸计算
+    # -------------------------------------------------------------------------
+
+    def _get_handle_canvas_size(self):
+        """计算手柄 Canvas 的边长（含 padding）"""
+        hs = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size']))
+        return hs + HANDLE_WIN_PADDING * 2
+
+    def _get_handle_offset(self):
+        """计算手柄区域宽度（root 左边缘到文本区左边缘的距离）"""
+        return self._get_handle_canvas_size() // 2 + HANDLE_REF_R + 20
+
+    def _get_handle_canvas_y(self):
+        """计算手柄 Canvas 在 root 内的 Y 坐标（圆心对齐 HANDLE_REF_R）"""
+        return HANDLE_REF_R - self._get_handle_canvas_size() // 2
+
+    # -------------------------------------------------------------------------
+    # 初始化
+    # -------------------------------------------------------------------------
 
     def _init_handle(self):
-        hs = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size'])) + HANDLE_WIN_PADDING * 2
-        # handle_win 必须是 root 的子窗口，而非独立顶级窗口。
-        # 独立顶级窗口(Toplevel())会被 Windows 在焦点切换时注册到任务栏，
-        # WS_EX_TOOLWINDOW 和 GWLP_HWNDPARENT 均不可靠。
-        # 作为 root 的子窗口，handle_win 不会出现在任务栏。
-        self.handle_win = tk.Toplevel(self.root)
-        self.handle_win.withdraw()
-        self.handle_win.overrideredirect(True)
-        self.handle_win.attributes("-topmost", True)
-
-        # 手柄窗口使用 COLORKEY 色键透明 + SetWindowRgn 实现圆形
-        # 非 COLORKEY 区域（绘制的圆环/实心圆）可见，COLORKEY 区域透明
-        self.handle_win.configure(bg=COLORKEY, bd=0, highlightthickness=0)
-        self.handle_win.geometry(f"{hs}x{hs}+0+0")
-
-        if self.icon_path and os.path.exists(self.icon_path):
-            try:
-                self.handle_win.iconbitmap(self.icon_path)
-            except Exception:
-                pass
+        """在 root 窗口上创建手柄 Canvas 控件"""
+        cs = self._get_handle_canvas_size()
 
         self.handle_canvas = tk.Canvas(
-            self.handle_win, bg=COLORKEY, highlightthickness=0, bd=0,
-            width=hs, height=hs, cursor="fleur")
-        self.handle_canvas.pack(fill="both", expand=True)
-
-        self.handle_win.update_idletasks()
-        self._handle_hwnd = self.handle_win.winfo_id()
-
-        # 使用 LWA_COLORKEY 色键透明，alpha=255（完全不透明）
-        # 手柄不透明度通过绘制颜色本身控制，不通过 LWA_ALPHA（避免黑底）
-        set_layered_transparent(
-            self._handle_hwnd, 255,
-            use_colorkey=True, show_taskbar=False)
-
-        self._set_handle_region(hs)
+            self.root, bg=COLORKEY, highlightthickness=0, bd=0,
+            width=cs, height=cs, cursor="fleur")
+        # 初始放在 root 左上角，_layout_handle 会调整位置
+        self.handle_canvas.place(x=0, y=0)
 
         self.root.after(200, self._show_handle)
 
@@ -68,7 +65,6 @@ class HandleMixin:
             label="隐写模式" if not self.cfg.get('stealth_mode') else "退出隐写模式",
             command=self.toggle_stealth)
         self.handle_menu.add_separator()
-        # 隐写行数选择：radiobutton 自带选中指示器，无需额外图标
         for lines, label in [(1, "一行模式"), (2, "两行模式"), (3, "三行模式")]:
             self.handle_menu.add_radiobutton(
                 label=label,
@@ -85,45 +81,20 @@ class HandleMixin:
         self.handle_menu.add_command(label="关于", command=self._show_about)
         self.handle_menu.add_command(label="退出", command=self.exit_app)
 
-    def _set_handle_region(self, hs=None):
-        """设置手柄窗口为圆形区域。
-
-        hs 参数直接传入窗口尺寸，避免读取 stale winfo_width/height
-        导致裁剪圆心与绘制圆心错位。
-        """
-        try:
-            if hs is None:
-                hs = self.handle_win.winfo_width()
-            if hs > 0:
-                rgn = gdi32.CreateEllipticRgn(0, 0, hs, hs)
-                user32.SetWindowRgn(self._handle_hwnd, rgn, True)
-        except Exception as e:
-            print(f"[手柄] 区域设置失败: {e}")
+    # -------------------------------------------------------------------------
+    # 显示/布局
+    # -------------------------------------------------------------------------
 
     def _show_handle(self):
+        """显示手柄并布局"""
         try:
-            self._deiconify_handle()
-            self.handle_win.lift()
             self._layout_handle()
             self._update_handle()
         except Exception as e:
             print(f"[手柄] 显示失败: {e}")
 
-    def _deiconify_handle(self):
-        """deiconify 手柄窗口并重新强制设置 WS_EX_TOOLWINDOW，防止出现在任务栏"""
-        self.handle_win.deiconify()
-        try:
-            ex = user32.GetWindowLongW(self._handle_hwnd, GWL_EXSTYLE)
-            ex |= WS_EX_TOOLWINDOW
-            ex &= ~WS_EX_APPWINDOW
-            user32.SetWindowLongW(self._handle_hwnd, GWL_EXSTYLE, ex)
-            user32.SetWindowPos(self._handle_hwnd, 0, 0, 0, 0, 0,
-                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
-        except Exception:
-            pass
-
     def _layout_handle(self):
-        # 取消之前的延迟布局，实现防抖（拖动期间避免频繁 winfo 调用）
+        """布局手柄 Canvas 在 root 内的位置，并调整 root 窗口大小以容纳手柄区域"""
         if hasattr(self, '_layout_handle_after_id') and self._layout_handle_after_id:
             try:
                 self.root.after_cancel(self._layout_handle_after_id)
@@ -133,49 +104,57 @@ class HandleMixin:
 
     def _do_layout_handle(self):
         self._layout_handle_after_id = None
-        hs = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size'])) + HANDLE_WIN_PADDING * 2
-        self.handle_win.geometry(f"{hs}x{hs}")
-        self.handle_canvas.configure(width=hs, height=hs)
+        cs = self._get_handle_canvas_size()
+        offset = self._get_handle_offset()
+        canvas_y = self._get_handle_canvas_y()
 
-        # 隐藏状态下用保存的窗口位置（root 已 withdraw，winfo 返回旧值）
+        # 更新 Canvas 尺寸
+        self.handle_canvas.configure(width=cs, height=cs)
+
+        # 获取文本区位置和大小
         if getattr(self, '_text_hidden', False) and self._hidden_window_geo:
-            wx = self._hidden_window_geo[0]
-            wy = self._hidden_window_geo[1]
+            text_x = self._hidden_window_geo[0]
+            text_y = self._hidden_window_geo[1]
+            text_w = self._hidden_window_geo[2]
         else:
-            wx = self.root.winfo_x()
-            wy = self.root.winfo_y()
-        size = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size']))
-        r = size // 2
+            try:
+                text_x = self.content_win.winfo_x()
+                text_y = self.content_win.winfo_y()
+                text_w = self.content_win.winfo_width()
+            except Exception:
+                return
 
-        # 手柄位于文本框/隐写框左侧，圆心固定（使用 HANDLE_REF_R 不随尺寸变化），X 方向间距 20px
-        hx = wx - hs // 2 - HANDLE_REF_R - 20
-        hy = wy + HANDLE_REF_R - hs // 2
+        # root 位置和大小（文本区向左扩展 handle_offset）
+        root_x = text_x - offset
+        root_y = text_y
+        root_w = max(text_w + offset, MIN_WINDOW_W + offset)
+        root_h = self.root.winfo_height()
 
-        if hx < 0:
-            hx = 0
-        if hy < 0:
-            hy = 0
+        if root_x < 0:
+            root_x = 0
+        if root_y < 0:
+            root_y = 0
 
-        self.handle_win.geometry(f"+{hx}+{hy}")
-        # 等待 geometry 生效后再设置圆形区域，避免 stale 尺寸导致圆心错位
-        self.handle_win.update_idletasks()
-        self.handle_win.lift()
-        self._set_handle_region(hs)
-        # 布局完成后立即更新绘制，确保圆心与窗口裁剪区域一致
+        self.root.geometry(f"{root_w}x{root_h}+{root_x}+{root_y}")
+
+        # 手柄 Canvas 在 root 内的位置
+        self.handle_canvas.place(x=0, y=canvas_y)
+
+        self.root.update_idletasks()
+        self._sync_content_window()
+        self.handle_canvas.lift()
         self._update_handle()
 
     def _update_handle(self):
+        """绘制手柄圆形"""
         self.handle_canvas.delete("all")
         size = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size']))
         color = self.cfg.get('handle_color', self.cfg['corner_color'])
         if self.cfg['invert_mode']:
             color = invert_color(color)
 
-        # 不与 ROOT_BG 预乘，直接使用原始颜色。
-        # handle_win 使用 LWA_COLORKEY 透明，COLORKEY 区域透明，
-        # 非 COLORKEY 区域（绘制内容）完全不透明，无黑底。
-        hs = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size'])) + HANDLE_WIN_PADDING * 2
-        cx, cy = hs // 2, hs // 2
+        cs = self._get_handle_canvas_size()
+        cx, cy = cs // 2, cs // 2
         r = size // 2
 
         focused = self.root.focus_get() in (self.text, self.stealth_text)
@@ -188,30 +167,29 @@ class HandleMixin:
             self.handle_canvas.create_oval(
                 cx - r + 4, cy - r + 4, cx + r - 4, cy + r - 4,
                 outline=mix_color("#FFFFFF", 0.5, color), width=2)
-            # 黑色外环：同圆心，半径比白色圆环大2px，便于在白色背景上识别
             self.handle_canvas.create_oval(
                 cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2,
                 outline="#000000", width=1)
         else:
             # 未获得焦点：圆环 + 中心不可见填充（捕获鼠标事件）
-            # 中心 fill="#010102" 仅比 COLORKEY(#010101) 多1位蓝色，
-            # 肉眼不可辨，但非 COLORKEY 不会被 LWA_COLORKEY 透明化，能捕获鼠标事件。
             ring_w = 3
             self.handle_canvas.create_oval(
                 cx - r, cy - r, cx + r, cy + r,
                 outline=color, width=ring_w, fill="")
-            # 中心填充：用比 COLORKEY 多1位的颜色，视觉透明但捕获事件
             inner_r = max(1, r - ring_w)
             self.handle_canvas.create_oval(
                 cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r,
                 fill="#010102", outline="")
-            # 黑色外环：同圆心，半径比白色圆环大2px，便于在白色背景上识别
             self.handle_canvas.create_oval(
                 cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2,
                 outline="#000000", width=1)
 
     def _on_handle_hover(self, entering):
         self._update_handle()
+
+    # -------------------------------------------------------------------------
+    # 右键菜单
+    # -------------------------------------------------------------------------
 
     def _show_handle_menu(self, event):
         try:
@@ -225,9 +203,14 @@ class HandleMixin:
         finally:
             self.handle_menu.grab_release()
 
+    # -------------------------------------------------------------------------
+    # 拖动
+    # -------------------------------------------------------------------------
+
     def _on_handle_press(self, event):
         self._drag_active = True
-        self._drag_dx = event.x_root - self.root.winfo_x()
+        offset = self._get_handle_offset()
+        self._drag_dx = event.x_root - (self.root.winfo_x() + offset)
         self._drag_dy = event.y_root - self.root.winfo_y()
         self._lift_all()
         if self.cfg.get('stealth_mode') and self.stealth_text.winfo_viewable():
@@ -250,85 +233,108 @@ class HandleMixin:
         ))
         self.root.lift()
         self.content_win.lift()
-        self.handle_win.lift()
+        self.handle_canvas.lift()
+        if self.cfg.get('show_panel') and hasattr(self, 'panel') and self.panel:
+            self.panel.lift()
 
     def _on_handle_drag(self, event):
         if not self._drag_active:
             return
-        x = event.x_root - self._drag_dx
-        y = event.y_root - self._drag_dy
+        offset = self._get_handle_offset()
+        x = event.x_root - self._drag_dx  # 文本区 x
+        y = event.y_root - self._drag_dy  # 文本区 y
+
         if getattr(self, '_text_hidden', False):
-            # 隐藏状态下拖动手柄：更新保存的窗口位置
-            if self._hidden_window_geo:
+            # 更新隐藏窗口位置记录
+            if hasattr(self, '_hidden_window_geo') and self._hidden_window_geo:
                 w, h = self._hidden_window_geo[2], self._hidden_window_geo[3]
                 self._hidden_window_geo = (x, y, w, h)
-            self._layout_handle()
+            # 移动仅手柄的 root 窗口
+            cs = self._get_handle_canvas_size()
+            handle_center_x = x - HANDLE_REF_R - 20
+            handle_center_y = y + HANDLE_REF_R
+            self.root.geometry(f"{cs}x{cs}+{handle_center_x - cs // 2}+{handle_center_y - cs // 2}")
         else:
-            self.root.geometry(f"+{x}+{y}")
-            self._layout_handle()
+            root_x = x - offset
+            root_y = y
+            self.root.geometry(f"+{root_x}+{root_y}")
+            self._sync_content_window()
 
     def _on_handle_release(self, event):
         if self._drag_active:
-            self.cfg['window_x'] = self.root.winfo_x()
-            self.cfg['window_y'] = self.root.winfo_y()
+            if getattr(self, '_text_hidden', False) and self._hidden_window_geo:
+                self.cfg['window_x'] = self._hidden_window_geo[0]
+                self.cfg['window_y'] = self._hidden_window_geo[1]
+            else:
+                offset = self._get_handle_offset()
+                self.cfg['window_x'] = self.root.winfo_x() + offset
+                self.cfg['window_y'] = self.root.winfo_y()
             self._save_config_debounced()
             self._drag_active = False
 
     def _on_handle_double_click(self, event):
-        """B26: 双击手柄切换书写框隐藏/显示。
-
-        3种工况：常规文本框 / 隐写框 / 都不显示。
-        双击在"显示"和"都不显示"之间切换。
-        恢复时以手柄为参考的相对位置显示。
-        """
+        """双击手柄切换书写框隐藏/显示"""
         self._toggle_text_hidden()
 
     def _toggle_text_hidden(self):
-        """切换书写框的隐藏/显示状态。"""
+        """切换书写框的隐藏/显示状态"""
         if not hasattr(self, '_text_hidden'):
             self._text_hidden = False
             self._hidden_window_geo = None
 
         if not self._text_hidden:
-            # 隐藏书写框：保存当前窗口位置和大小
+            offset = self._get_handle_offset()
             self._hidden_window_geo = (
-                self.root.winfo_x(),
+                self.root.winfo_x() + offset,
                 self.root.winfo_y(),
-                self.root.winfo_width(),
-                self.root.winfo_height()
+                self.content_win.winfo_width(),
+                self.content_win.winfo_height()
             )
             self.root.withdraw()
             self.content_win.withdraw()
             self._text_hidden = True
-            # handle_win 是 root 的子窗口，root.withdraw() 可能将其隐藏，
-            # 显式 deiconify 确保手柄保持可见
-            self._deiconify_handle()
+            # 手柄是 root 的子控件，root.withdraw() 会隐藏手柄，需要重新显示 root
+            # 但只显示手柄区域（缩小 root 到仅手柄大小）
+            cs = self._get_handle_canvas_size()
+            handle_center_x = self._hidden_window_geo[0] - HANDLE_REF_R - 20
+            handle_center_y = self._hidden_window_geo[1] + HANDLE_REF_R
+            self.root.geometry(f"{cs}x{cs}+{handle_center_x - cs // 2}+{handle_center_y - cs // 2}")
+            self.handle_canvas.place(x=0, y=0)
+            self.root.deiconify()
         else:
-            # 恢复书写框：以手柄为参考的相对位置显示
+            offset = self._get_handle_offset()
             self.root.deiconify()
             self.content_win.deiconify()
-            self._deiconify_handle()
 
-            # 恢复到之前保存的位置
             if self._hidden_window_geo:
                 x, y, w, h = self._hidden_window_geo
-                self.root.geometry(f"{w}x{h}+{x}+{y}")
+                root_x = x - offset
+                root_y = y
+                root_w = w + offset
+                root_h = h
+                self.root.geometry(f"{root_w}x{root_h}+{root_x}+{root_y}")
                 self.content_win.geometry(f"{w}x{h}+{x}+{y}")
+
+            # 重新布局手柄
+            canvas_y = self._get_handle_canvas_y()
+            self.handle_canvas.place(x=0, y=canvas_y)
 
             self._sync_content_window()
             self._text_hidden = False
             self._force_foreground()
             self._focus_text()
 
+    # -------------------------------------------------------------------------
+    # 辅助
+    # -------------------------------------------------------------------------
+
     def _is_left_button_held(self):
-        """检测鼠标左键是否按下"""
         try:
             return (user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0
         except Exception:
             return False
 
     def _is_ctrl_held(self):
-        """检测 Ctrl 键是否按下"""
         try:
             return (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
         except Exception:
@@ -338,14 +344,12 @@ class HandleMixin:
         """手柄滚轮：左键+滚轮→底色透明度，Ctrl+滚轮→底色透明度，直接滚轮→文字透明度"""
         delta = 1 if event.delta > 0 else -1
         if self._is_left_button_held() or self._is_ctrl_held():
-            # 左键或Ctrl按下：仅调整底色透明度
             new_op = max(0.0, min(1.0, self.cfg['bg_opacity'] + delta * 0.08))
             if abs(new_op - self.cfg['bg_opacity']) > 0.001:
                 self.cfg['bg_opacity'] = round(new_op, 2)
                 self._apply_window_style()
                 self._save_config_debounced()
         else:
-            # 无修饰键：调整文字透明度
             new_op = max(0.1, min(1.0, self.cfg['text_opacity'] + delta * 0.08))
             if abs(new_op - self.cfg['text_opacity']) > 0.001:
                 self.cfg['text_opacity'] = round(new_op, 2)

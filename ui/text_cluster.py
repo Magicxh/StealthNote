@@ -277,10 +277,11 @@ class TextClusterMixin:
 
         # 隐写模式下字号变化时同步更新窗口高度
         if self.cfg.get('stealth_mode') and hasattr(self, 'stealth_container') and self._is_stealth_container_visible():
-            ww = self.root.winfo_width()
+            ww = self.content_win.winfo_width()
             new_h = self._calc_stealth_window_height()
             if abs(new_h - self.root.winfo_height()) > 2:
-                self.root.geometry(f"{ww}x{new_h}")
+                offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+                self.root.geometry(f"{ww + offset}x{new_h}")
                 self.content_win.geometry(f"{ww}x{new_h}")
                 self._corner_dirty = True
                 self._update_corners()

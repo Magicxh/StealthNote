@@ -22,7 +22,8 @@ class RootWindowMixin:
             self.root.attributes("-topmost", self.cfg['topmost']),
             self.content_win.attributes("-topmost", self.cfg['topmost'])
         ))
-        self.handle_win.lift()
+        if hasattr(self, 'handle_canvas') and self.handle_canvas:
+            self.handle_canvas.lift()
         # 仪表盘跟随焦点（与手柄同层级，不设 topmost）
         if self.cfg.get('show_panel') and hasattr(self, 'panel') and self.panel:
             self.panel.lift()
@@ -32,7 +33,10 @@ class RootWindowMixin:
     # -------------------------------------------------------------------------
 
     def _create_root(self):
-        """创建根窗口（完全透明，仅作容器，content_win 负责实际显示）"""
+        """创建根窗口（完全透明，仅作容器，content_win 负责实际显示。
+
+        v2.9.7: root 窗口向左扩展以容纳手柄 Canvas，彻底消除任务栏双窗口问题。
+        """
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.title(APP_NAME)
@@ -57,7 +61,17 @@ class RootWindowMixin:
             x = int(self.cfg['window_x'])
             y = int(self.cfg['window_y'])
 
-        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        # v2.9.7: 计算手柄偏移量，root 向左扩展
+        hs = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size']))
+        handle_cs = hs + HANDLE_WIN_PADDING * 2
+        handle_offset = handle_cs // 2 + HANDLE_REF_R + 20
+
+        root_x = x - handle_offset
+        root_y = y
+        root_w = w + handle_offset
+        root_h = h
+
+        self.root.geometry(f"{root_w}x{root_h}+{root_x}+{root_y}")
 
         # root 完全透明（COLORKEY），content_win 负责实际显示
         self.root.configure(bg=COLORKEY, bd=0, highlightthickness=0)
@@ -134,13 +148,9 @@ class RootWindowMixin:
             if self.cfg['topmost']:
                 self.root.attributes("-topmost", True)
                 self.content_win.attributes("-topmost", True)
-                if hasattr(self, 'handle_win') and self.handle_win:
-                    self.handle_win.attributes("-topmost", True)
             else:
                 self.root.attributes("-topmost", False)
                 self.content_win.attributes("-topmost", False)
-                if hasattr(self, 'handle_win') and self.handle_win:
-                    self.handle_win.attributes("-topmost", False)
 
             if hasattr(self, '_taskbar_host') and self._taskbar_host:
                 self._taskbar_host.sync()
@@ -164,13 +174,22 @@ class RootWindowMixin:
             self._resize_after_id = self.root.after(30, self._on_window_resized)
 
     def _sync_content_window(self):
-        """同步内容窗口与根窗口的位置和大小"""
+        """同步内容窗口与根窗口的位置和大小。
+
+        v2.9.7: content_win 位于 root 右侧（文本区），
+        偏移量为手柄区域宽度（_get_handle_offset）。
+        """
         try:
             if hasattr(self, 'content_win') and self.content_win and self.content_win.winfo_exists():
-                x = self.root.winfo_x()
+                offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+                x = self.root.winfo_x() + offset
                 y = self.root.winfo_y()
-                w = self.root.winfo_width()
+                w = self.root.winfo_width() - offset
                 h = self.root.winfo_height()
+                if w < MIN_WINDOW_W:
+                    w = MIN_WINDOW_W
+                if h < MIN_WINDOW_H:
+                    h = MIN_WINDOW_H
                 self.content_win.geometry(f"{w}x{h}+{x}+{y}")
         except Exception as e:
             print(f"[同步内容窗口] 失败: {e}")
@@ -185,8 +204,9 @@ class RootWindowMixin:
         if self.cfg.get('stealth_mode'):
             self._refresh_stealth_view()
         if self._window_visible:
-            self.cfg['window_width'] = self.root.winfo_width()
-            self.cfg['window_x'] = self.root.winfo_x()
+            offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+            self.cfg['window_width'] = self.root.winfo_width() - offset
+            self.cfg['window_x'] = self.root.winfo_x() + offset
             self.cfg['window_y'] = self.root.winfo_y()
             if not self.cfg.get('stealth_mode'):
                 self.cfg['window_height'] = self.root.winfo_height()

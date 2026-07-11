@@ -206,11 +206,9 @@ class PanelMixin:
         self.cfg['topmost'] = not self.cfg['topmost']
         self.root.attributes("-topmost", self.cfg['topmost'])
         self.content_win.attributes("-topmost", self.cfg['topmost'])
-        self.handle_win.attributes("-topmost", self.cfg['topmost'])
         if self.cfg['topmost']:
             self.root.lift()
             self.content_win.lift()
-            self.handle_win.lift()
         self._update_panel_button_states()
         self._save_config_debounced()
 

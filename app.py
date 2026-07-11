@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stealth Note v2.9.6 - 主应用类"""
+"""Stealth Note v2.9.7 - 主应用类"""
 
 import os
 import sys
@@ -68,7 +68,6 @@ class StealthNoteApp(
         self._preview_after_id = None
 
         self._root_hwnd = None
-        self._handle_hwnd = None
         self._panel_hwnd = None
 
         self.icon_path = create_app_icon()
@@ -279,19 +278,27 @@ class StealthNoteApp(
     def _show_window(self):
         self.root.deiconify()
         self.content_win.deiconify()
-        self._deiconify_handle()
         if self.cfg['show_panel']:
             self.panel.deiconify()
         self._window_visible = True
         # deiconify 后重新设置窗口样式，防止 WS_EX_TOOLWINDOW 被重置导致任务栏双窗口
         self._apply_window_style()
-        # 如果书写框被双击隐藏，恢复时保持隐藏
+        # 如果书写框被双击隐藏，恢复时保持隐藏（仅显示手柄）
         if getattr(self, '_text_hidden', False):
             self.root.withdraw()
             self.content_win.withdraw()
-            self._deiconify_handle()
+            # v2.9.7: 重新显示仅手柄的 root 视图
+            cs = self._get_handle_canvas_size()
+            if hasattr(self, '_hidden_window_geo') and self._hidden_window_geo:
+                x, y, w, h = self._hidden_window_geo
+                handle_center_x = x - HANDLE_REF_R - 20
+                handle_center_y = y + HANDLE_REF_R
+                self.root.geometry(f"{cs}x{cs}+{handle_center_x - cs // 2}+{handle_center_y - cs // 2}")
+                self.handle_canvas.place(x=0, y=0)
+                self.root.deiconify()
         else:
             self._sync_content_window()
+            self._layout_handle()
             self._force_foreground()
             if self.cfg.get('stealth_mode') and self.stealth_text.winfo_viewable():
                 self.stealth_text.focus_set()
@@ -302,7 +309,6 @@ class StealthNoteApp(
     def _hide_window(self):
         self.root.withdraw()
         self.content_win.withdraw()
-        self.handle_win.withdraw()
         if self.cfg['show_panel']:
             self.panel.withdraw()
         self._window_visible = False
@@ -342,10 +348,10 @@ class StealthNoteApp(
             return
         try:
             if self._window_visible:
-                self.cfg['window_width'] = self.root.winfo_width()
-                self.cfg['window_height'] = self.root.winfo_height()
-                self.cfg['window_x'] = self.root.winfo_x()
-                self.cfg['window_y'] = self.root.winfo_y()
+                self.cfg['window_width'] = self.content_win.winfo_width()
+                self.cfg['window_height'] = self.content_win.winfo_height()
+                self.cfg['window_x'] = self.content_win.winfo_x()
+                self.cfg['window_y'] = self.content_win.winfo_y()
             self._do_save_config()
         except Exception:
             pass

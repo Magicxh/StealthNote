@@ -194,12 +194,7 @@ class SettingsMixin:
             alpha = int(max(MIN_PANEL_OPACITY, self._preview_cfg['panel_opacity']) * 255)
             set_layered_transparent(self._panel_hwnd, alpha, use_colorkey=True, show_taskbar=False)
 
-            if not self._handle_hwnd and hasattr(self, 'handle_win') and self.handle_win and self.handle_win.winfo_exists():
-                self._handle_hwnd = self.handle_win.winfo_id()
-            if self._handle_hwnd:
-                set_layered_transparent(
-                    self._handle_hwnd, 255,
-                    use_colorkey=False, show_taskbar=False)
+            # v2.9.7: 手柄已改为 root 上的 Canvas 控件，无需单独设置透明属性
 
             self.root.attributes("-topmost", self._preview_cfg['topmost'])
 

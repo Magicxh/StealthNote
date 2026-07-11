@@ -80,8 +80,9 @@ class StealthClusterMixin:
             new_h = self._calc_stealth_window_height()
             wx = self.root.winfo_x()
             wy = self.root.winfo_y()
-            self.root.geometry(f"{self.root.winfo_width()}x{new_h}")
-            self.content_win.geometry(f"{self.root.winfo_width()}x{new_h}")
+            offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+            self.root.geometry(f"{self.content_win.winfo_width() + offset}x{new_h}")
+            self.content_win.geometry(f"{self.content_win.winfo_width()}x{new_h}")
             self.content_win.update_idletasks()
             self._corner_dirty = True
             self._update_corners()
@@ -231,7 +232,8 @@ class StealthClusterMixin:
 
         wx = self.root.winfo_x()
         wy = self.root.winfo_y()
-        ww = self.root.winfo_width()
+        ww = self.content_win.winfo_width()
+        offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
 
         if self.cfg['stealth_mode']:
             # 保存当前窗口高度（用于恢复）
@@ -253,7 +255,7 @@ class StealthClusterMixin:
             # 调整窗口高度（左上角锚定，宽度不变）
             self.stealth_text.update_idletasks()
             new_h = self._calc_stealth_window_height()
-            self.root.geometry(f"{ww}x{new_h}")
+            self.root.geometry(f"{ww + offset}x{new_h}")
             self.content_win.geometry(f"{ww}x{new_h}")
             self.content_win.update_idletasks()
 
@@ -283,7 +285,7 @@ class StealthClusterMixin:
                 new_h = self._normal_window_height
             else:
                 new_h = max(MIN_WINDOW_H, self.cfg.get('window_height', 400))
-            self.root.geometry(f"{ww}x{new_h}")
+            self.root.geometry(f"{ww + offset}x{new_h}")
             self.content_win.geometry(f"{ww}x{new_h}")
 
             self.text.focus_set()
@@ -322,9 +324,10 @@ class StealthClusterMixin:
 
                 # 调整窗口高度
                 self.stealth_text.update_idletasks()
-                ww = self.root.winfo_width()
+                ww = self.content_win.winfo_width()
                 new_h = self._calc_stealth_window_height()
-                self.root.geometry(f"{ww}x{new_h}")
+                offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+                self.root.geometry(f"{ww + offset}x{new_h}")
                 self.content_win.geometry(f"{ww}x{new_h}")
                 self.content_win.update_idletasks()
                 self._corner_dirty = True

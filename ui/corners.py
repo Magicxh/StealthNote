@@ -10,7 +10,7 @@ class CornersMixin:
     def _init_corners(self):
         """初始化四角框线：角元素已在 _init_content 中创建（位于文本之下），
         此处仅完成初始布局绘制。注意：只调用 _layout_corners()，不调用 _layout_all()，
-        因为 _init_handle 还未执行，handle_win 尚不存在。"""
+        因为 _init_handle 还未执行。"""
         self._layout_corners()
 
     def _layout_all(self):
@@ -114,56 +114,62 @@ class CornersMixin:
         # 隐写模式下禁止纵向缩放（高度由行数决定）
         if self.cfg.get('stealth_mode') and ('n' in edge or 's' in edge):
             return
-        w = self.root.winfo_width()
-        h = self.root.winfo_height()
+        w = self.content_win.winfo_width()
+        h = self.content_win.winfo_height()
+        cwx = self.content_win.winfo_x()
+        cwy = self.content_win.winfo_y()
         self._resize_edge = edge
-        self._resize_start = (event.x_root, event.y_root, w, h)
+        self._resize_start = (event.x_root, event.y_root, w, h, cwx, cwy)
         self._corner_dirty = True
 
     def _on_resize(self, event):
         if not self._resize_edge:
             return
-        sx, sy, sw, sh = self._resize_start
+        sx, sy, sw, sh, cwx, cwy = self._resize_start
         dx = event.x_root - sx
         dy = event.y_root - sy
         edge = self._resize_edge
 
         nw, nh = sw, sh
-        nx, ny = self.root.winfo_x(), self.root.winfo_y()
+        nx, ny = cwx, cwy
 
         if 'e' in edge:
             nw = sw + dx
         if 'w' in edge:
             nw = sw - dx
-            nx = sx + dx
+            nx = cwx + dx
         if 's' in edge:
             nh = sh + dy
         if 'n' in edge:
             nh = sh - dy
-            ny = sy + dy
+            ny = cwy + dy
 
         nw = max(MIN_WINDOW_W, nw)
         nh = max(MIN_WINDOW_H, nh)
-        self.root.geometry(f"{nw}x{nh}+{nx}+{ny}")
+
+        # v2.9.7: root 窗口 = content_win 向左扩展 handle_offset
+        offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+        self.root.geometry(f"{nw + offset}x{nh}+{nx - offset}+{ny}")
 
     def _on_resize_end(self, event):
         if self._resize_edge:
-            self.cfg['window_width'] = self.root.winfo_width()
-            self.cfg['window_x'] = self.root.winfo_x()
-            self.cfg['window_y'] = self.root.winfo_y()
+            self.cfg['window_width'] = self.content_win.winfo_width()
+            self.cfg['window_x'] = self.content_win.winfo_x()
+            self.cfg['window_y'] = self.content_win.winfo_y()
             if not self.cfg.get('stealth_mode'):
-                self.cfg['window_height'] = self.root.winfo_height()
+                self.cfg['window_height'] = self.content_win.winfo_height()
             self._save_config_debounced()
             self._resize_edge = None
             self._layout_handle()
             self._layout_corners()
 
     def _get_resize_edge_at(self, x, y):
-        """根据鼠标坐标判断当前是否处于四角缩放热区"""
+        """根据鼠标坐标判断当前是否处于四角缩放热区。
+        v2.9.7: 使用 content_win 尺寸（文本区），而非 root（含手柄区域）。"""
         if self.cfg.get('stealth_mode'):
             return None
-        w = self.root.winfo_width()
-        h = self.root.winfo_height()
+        w = self.content_win.winfo_width()
+        h = self.content_win.winfo_height()
         hs = CORNER_HOT_SIZE
         if x <= hs and y <= hs:
             return "nw"
@@ -257,11 +263,7 @@ class CornersMixin:
             return False
 
     def _on_root_button_press(self, event):
-        """根窗口按下：仅处理四角缩放，其余情况聚焦文本框。"""
-        edge = self._get_resize_edge_at(event.x, event.y)
-        if edge:
-            self._on_resize_start(event, edge)
-            return
+        """v2.9.7: root 包含手柄区域，仅聚焦文本，缩放由 content_win 处理"""
         self._focus_text()
 
     def _on_root_resize(self, event):
@@ -276,19 +278,8 @@ class CornersMixin:
             self._on_root_motion(event)
 
     def _on_root_motion(self, event):
-        """根窗口移动：在四角热区切换鼠标指针"""
-        try:
-            edge = self._get_resize_edge_at(event.x, event.y)
-            cursor = {
-                "nw": "top_left_corner",
-                "ne": "top_right_corner",
-                "sw": "bottom_left_corner",
-                "se": "bottom_right_corner",
-            }.get(edge, "")
-            self.root.config(cursor=cursor)
-            self.content_win.config(cursor=cursor)
-        except Exception:
-            pass
+        """根窗口移动：v2.9.7 root 包含手柄区域，不在 root 上显示缩放光标"""
+        pass
 
     def _on_content_button_press(self, event):
         """内容窗口按下：仅处理四角缩放，其余情况聚焦文本框。
