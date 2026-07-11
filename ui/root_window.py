@@ -5,28 +5,82 @@ from constants import *
 from utils import set_layered_transparent
 
 class RootWindowMixin:
-    """窗口管理 Mixin：创建、样式、同步、任务栏"""
+    """窗口管理 Mixin：创建、样式、同步、任务栏
+
+    v2.9.7+ 架构：
+    - host_win 是唯一的任务栏窗口（所有者窗口）
+    - root / content_win / panel 等所有可见窗口都通过 GWLP_HWNDPARENT 归属到 host_win
+    - 注意：winfo_id() 返回的是 Tk 内部 TkChild 窗口句柄，
+      真正与 Windows 窗口管理器交互的是 TkTopLevel 窗口。
+      必须用 _get_real_hwnd() 获取真正的顶层窗口句柄。
+    """
+
+    def _get_real_hwnd(self, hwnd):
+        """获取 Tkinter 窗口对应的真正顶层 HWND（TkTopLevel 而非 TkChild）。
+
+        Tkinter winfo_id() 返回的是内部 TkChild 窗口句柄，
+        而 Windows 任务栏/窗口管理器交互的是外层的 TkTopLevel 窗口。
+        必须对真正的 TkTopLevel 窗口设置样式才能生效。
+
+        使用 GA_ROOT 而非 GA_ROOTOWNER：GA_ROOT 找到该窗口所属的顶层窗口（TkTopLevel），
+        GA_ROOTOWNER 会追溯所有者链，导致不同 Toplevel 返回同一个 HWND。
+        """
+        if not hwnd:
+            return 0
+        try:
+            return user32.GetAncestor(hwnd, GA_ROOT)
+        except Exception:
+            return hwnd
+
+    def _set_window_owner(self, child_hwnd, owner_hwnd):
+        """设置窗口所有者（GWLP_HWNDPARENT）。
+
+        必须在子窗口第一次显示 / 第一次调用 SetWindowPos 之前调用，
+        否则 Windows 可能已经将其注册到任务栏。
+
+        注意：使用 _get_real_hwnd() 获取真正的 TkTopLevel 窗口。
+        """
+        if not child_hwnd or not owner_hwnd:
+            return
+        try:
+            real_child = self._get_real_hwnd(child_hwnd)
+            real_owner = self._get_real_hwnd(owner_hwnd)
+            SetWindowLongPtrW(real_child, GWLP_HWNDPARENT, real_owner)
+        except Exception as e:
+            print(f"[窗口] 设置所有者失败: {e}")
 
     def _force_foreground(self):
-        """强制将所有窗口带到最前台（使用Windows API）"""
+        """强制将所有窗口带到最前台。
+
+        v2.9.7: 所有窗口（root/content_win/panel）都归属到 host_win。
+        激活 host_win 会自动激活所有所属窗口，确保它们一起到前台。
+        """
         try:
-            user32.SetForegroundWindow(self._root_hwnd)
-            user32.BringWindowToTop(self._root_hwnd)
+            # 先激活 host_win（所有者），Windows 会自动把所有所属窗口带到前台
+            if hasattr(self, '_host_hwnd') and self._host_hwnd:
+                real_host = self._get_real_hwnd(self._host_hwnd)
+                user32.SetForegroundWindow(real_host)
+            real_root = self._get_real_hwnd(self._root_hwnd)
+            user32.SetForegroundWindow(real_root)
+            user32.BringWindowToTop(real_root)
         except Exception:
             pass
         self.root.attributes("-topmost", True)
         self.content_win.attributes("-topmost", True)
+        if hasattr(self, 'panel') and self.panel and self.panel.winfo_exists():
+            self.panel.attributes("-topmost", True)
         self.root.lift()
         self.content_win.lift()
-        self.root.after(80, lambda: (
-            self.root.attributes("-topmost", self.cfg['topmost']),
-            self.content_win.attributes("-topmost", self.cfg['topmost'])
-        ))
         if hasattr(self, 'handle_canvas') and self.handle_canvas:
-            self.handle_canvas.lift()
-        # 仪表盘跟随焦点（与手柄同层级，不设 topmost）
+            self.handle_canvas.tk.call('raise', self.handle_canvas._w)
         if self.cfg.get('show_panel') and hasattr(self, 'panel') and self.panel:
             self.panel.lift()
+        self.root.after(80, lambda: (
+            self.root.attributes("-topmost", self.cfg['topmost']),
+            self.content_win.attributes("-topmost", self.cfg['topmost']),
+            self.panel.attributes("-topmost", self.cfg['topmost'])
+            if hasattr(self, 'panel') and self.panel and self.panel.winfo_exists() else None
+        ))
 
     # -------------------------------------------------------------------------
     # 主窗口
@@ -81,11 +135,13 @@ class RootWindowMixin:
         self._root_hwnd = self.root.winfo_id()
 
         # B18: 立即设置 WS_EX_TOOLWINDOW，避免 root 窗口在首次 _apply_window_style 前出现在任务栏
+        # v2.9.7: 对真正的 TkTopLevel 窗口设置，而非 TkChild
         try:
-            ex_style = user32.GetWindowLongW(self._root_hwnd, GWL_EXSTYLE)
+            real_hwnd = self._get_real_hwnd(self._root_hwnd)
+            ex_style = user32.GetWindowLongW(real_hwnd, GWL_EXSTYLE)
             ex_style |= WS_EX_TOOLWINDOW
             ex_style &= ~WS_EX_APPWINDOW
-            user32.SetWindowLongW(self._root_hwnd, GWL_EXSTYLE, ex_style)
+            user32.SetWindowLongW(real_hwnd, GWL_EXSTYLE, ex_style)
         except Exception:
             pass
 
@@ -106,6 +162,9 @@ class RootWindowMixin:
         - content_win: LWA_ALPHA | LWA_COLORKEY，crKey=COLORKEY，alpha=bg_op*255 → 整体半透明
         - 易读模式下 content_win alpha=0（完全透明），由 Text tag 显示行背景
         - Text bg=raw_bg 实色，原生交互顺滑，抗锯齿相对于 raw_bg 无毛边
+
+        v2.9.7: 任务栏相关样式(WS_EX_TOOLWINDOW/GWLP_HWNDPARENT)必须对真正的
+        TkTopLevel 窗口设置（通过 _get_real_hwnd），而非 winfo_id() 返回的 TkChild。
         """
         try:
             bg_op = max(0.05, self.cfg['bg_opacity'])
@@ -117,10 +176,13 @@ class RootWindowMixin:
 
             # ===== root 窗口：LWA_COLORKEY only =====
             self.root.attributes("-transparentcolor", COLORKEY)
-            ex_style = user32.GetWindowLongW(self._root_hwnd, GWL_EXSTYLE)
+            # v2.9.7: 任务栏样式对真正的 TkTopLevel 设置
+            real_root = self._get_real_hwnd(self._root_hwnd)
+            ex_style = user32.GetWindowLongW(real_root, GWL_EXSTYLE)
             ex_style |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex_style &= ~WS_EX_APPWINDOW
-            user32.SetWindowLongW(self._root_hwnd, GWL_EXSTYLE, ex_style)
+            user32.SetWindowLongW(real_root, GWL_EXSTYLE, ex_style)
+            # 透明度属性对 TkChild 设置（内容窗口）
             user32.SetLayeredWindowAttributes(self._root_hwnd, COLORKEY_INT, 255, LWA_COLORKEY)
             user32.SetWindowPos(self._root_hwnd, 0, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
@@ -128,10 +190,12 @@ class RootWindowMixin:
             # ===== content_win 内容窗口：LWA_ALPHA | LWA_COLORKEY =====
             if not hasattr(self, '_content_hwnd') or not self._content_hwnd:
                 self._content_hwnd = self.content_win.winfo_id()
-            ex2 = user32.GetWindowLongW(self._content_hwnd, GWL_EXSTYLE)
+            # v2.9.7: 任务栏样式对真正的 TkTopLevel 设置
+            real_content = self._get_real_hwnd(self._content_hwnd)
+            ex2 = user32.GetWindowLongW(real_content, GWL_EXSTYLE)
             ex2 |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex2 &= ~WS_EX_APPWINDOW
-            user32.SetWindowLongW(self._content_hwnd, GWL_EXSTYLE, ex2)
+            user32.SetWindowLongW(real_content, GWL_EXSTYLE, ex2)
             # 易读模式下背景完全透明
             if self.cfg['read_mode']:
                 effective_bg_op = 0.0

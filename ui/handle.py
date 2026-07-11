@@ -142,7 +142,7 @@ class HandleMixin:
 
         self.root.update_idletasks()
         self._sync_content_window()
-        self.handle_canvas.lift()
+        self.handle_canvas.tk.call('raise', self.handle_canvas._w)
         self._update_handle()
 
     def _update_handle(self):
@@ -233,7 +233,7 @@ class HandleMixin:
         ))
         self.root.lift()
         self.content_win.lift()
-        self.handle_canvas.lift()
+        self.handle_canvas.tk.call('raise', self.handle_canvas._w)
         if self.cfg.get('show_panel') and hasattr(self, 'panel') and self.panel:
             self.panel.lift()
 

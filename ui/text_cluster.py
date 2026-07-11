@@ -21,6 +21,11 @@ class TextClusterMixin:
         self.content_win.configure(bg=raw_bg, bd=0, highlightthickness=0)
         self.content_win.attributes("-topmost", True)
 
+        # v2.9.7: 立即设置所有者为 host_win，防止出现在任务栏
+        self.content_win.update_idletasks()
+        self._content_hwnd = self.content_win.winfo_id()
+        self._set_window_owner(self._content_hwnd, self._host_hwnd)
+
         self.content_frame = tk.Frame(self.content_win, bg=raw_bg, bd=0, highlightthickness=0)
         self.content_frame.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 

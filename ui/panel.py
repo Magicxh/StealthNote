@@ -10,6 +10,7 @@ class PanelMixin:
     
     def _init_panel(self):
         self.panel = tk.Toplevel(self.root)
+        self.panel.withdraw()
         self.panel.overrideredirect(True)
 
         # 仪表盘使用色键 #010101 实现透明区域
@@ -31,8 +32,12 @@ class PanelMixin:
             py = int(self.cfg['panel_y'])
 
         self.panel.geometry(f"{PANEL_WIDTH}x{PANEL_HEIGHT}+{px}+{py}")
-
+        self.panel.update_idletasks()
         self._panel_hwnd = self.panel.winfo_id()
+
+        # v2.9.7: 在 set_layered_transparent（调用SetWindowPos）之前设置所有者
+        self._set_window_owner(self._panel_hwnd, self._host_hwnd)
+
         set_layered_transparent(
             self._panel_hwnd,
             int(max(MIN_PANEL_OPACITY, self.cfg['panel_opacity']) * 255),

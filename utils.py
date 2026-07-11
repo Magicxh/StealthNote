@@ -9,7 +9,7 @@ from constants import (
     COLORKEY, COLORKEY_INT, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
     WS_EX_APPWINDOW, LWA_ALPHA, LWA_COLORKEY, SWP_NOMOVE, SWP_NOSIZE,
     SWP_NOZORDER, SWP_FRAMECHANGED, user32, kernel32,
-    CONFIG_FILE, ICON_FILE)
+    CONFIG_FILE, ICON_FILE, GA_ROOT)
 
 
 def invert_color(hex_color):
@@ -104,16 +104,31 @@ def write_text_file(file_path, content, encoding='utf-8'):
 
 
 def set_layered_transparent(hwnd, alpha=255, use_colorkey=False, show_taskbar=True):
-    """设置窗口分层透明属性"""
+    """设置窗口分层透明属性。
+
+    v2.9.7: 任务栏样式（WS_EX_TOOLWINDOW/APPWINDOW）必须对真正的 TkTopLevel 窗口设置，
+    而透明度属性对 TkChild 设置（即 winfo_id() 返回的 HWND）。
+    """
     try:
+        # 对真正的 TkTopLevel 窗口设置任务栏样式
+        try:
+            real_hwnd = user32.GetAncestor(hwnd, GA_ROOT)
+        except Exception:
+            real_hwnd = hwnd
+
+        ex_real = user32.GetWindowLongW(real_hwnd, GWL_EXSTYLE)
+        ex_real |= WS_EX_LAYERED
+        if show_taskbar:
+            ex_real |= WS_EX_APPWINDOW
+            ex_real &= ~WS_EX_TOOLWINDOW
+        else:
+            ex_real |= WS_EX_TOOLWINDOW
+            ex_real &= ~WS_EX_APPWINDOW
+        user32.SetWindowLongW(real_hwnd, GWL_EXSTYLE, ex_real)
+
+        # 对 TkChild 窗口设置透明度属性
         ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         ex_style |= WS_EX_LAYERED
-        if show_taskbar:
-            ex_style |= WS_EX_APPWINDOW
-            ex_style &= ~WS_EX_TOOLWINDOW
-        else:
-            ex_style |= WS_EX_TOOLWINDOW
-            ex_style &= ~WS_EX_APPWINDOW
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style)
 
         flags = LWA_ALPHA

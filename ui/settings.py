@@ -13,6 +13,8 @@ from constants import (
     MIN_CORNER_LINE, MIN_CORNER_LEN, MAX_CORNER_LEN, MAX_CORNER_LINE,
     MIN_HANDLE_SIZE, MAX_HANDLE_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE,
     MIN_PANEL_OPACITY,
+    GWLP_HWNDPARENT, SetWindowLongPtrW,
+    GA_ROOT, user32,
 )
 from config import DEFAULT_CONFIG, validate_config
 from utils import clamp, set_layered_transparent
@@ -34,13 +36,13 @@ class SettingsMixin:
         self._settings_win.resizable(True, True)
         self._settings_win.minsize(600, 700)
 
-        # B23: 设置窗口不显示在任务栏
+        # v2.9.7: 设置所有者为 host_win，防止出现在任务栏（在窗口显示前设置）
+        # 对真正的 TkTopLevel 窗口设置，而非 TkChild
         try:
-            from constants import GWL_EXSTYLE, WS_EX_TOOLWINDOW, user32
             _settings_hwnd = self._settings_win.winfo_id()
-            ex = user32.GetWindowLongW(_settings_hwnd, GWL_EXSTYLE)
-            ex |= WS_EX_TOOLWINDOW
-            user32.SetWindowLongW(_settings_hwnd, GWL_EXSTYLE, ex)
+            real_settings = user32.GetAncestor(_settings_hwnd, GA_ROOT)
+            real_owner = user32.GetAncestor(self._host_hwnd, GA_ROOT)
+            SetWindowLongPtrW(real_settings, GWLP_HWNDPARENT, real_owner)
         except Exception:
             pass
 

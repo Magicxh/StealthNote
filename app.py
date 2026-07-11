@@ -72,11 +72,17 @@ class StealthNoteApp(
 
         self.icon_path = create_app_icon()
 
-        # 1. 创建主窗口
+        # v2.9.7 修正初始化顺序：host_win 先创建，所有子窗口立即设置 GWLP_HWNDPARENT
+        # 确保 Windows 从一开始就知道只有 host_win 是任务栏窗口，彻底杜绝双窗口
+
+        # 1. 创建 root（Tk），立即 withdraw，不显示
         self._create_root()
-        # 2. 创建任务栏代理
+        # 2. 创建任务栏代理（host_win）
         self._taskbar_host = TaskbarHost(self)
-        # 3. 初始化所有UI组件
+        self._host_hwnd = self._taskbar_host.get_hwnd()
+        # 3. 设置 root 的所有者（在 root 第一次显示之前！）
+        self._set_window_owner(self._root_hwnd, self._host_hwnd)
+        # 4. 初始化所有 UI 组件（每个组件创建窗口后立即设所有者）
         self._init_content()
         self._init_corners()
         self._init_handle()

@@ -3,8 +3,8 @@
 import os
 import tkinter as tk
 from constants import (
-    APP_NAME, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
-    LWA_ALPHA, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_FRAMECHANGED, user32,
+    APP_NAME, GWL_EXSTYLE, GWLP_HWNDPARENT, WS_EX_LAYERED, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    LWA_ALPHA, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_FRAMECHANGED, user32, SetWindowLongPtrW,
 )
 from utils import set_layered_transparent
 
@@ -12,9 +12,10 @@ from utils import set_layered_transparent
 class TaskbarHost:
     """任务栏代理窗口：在任务栏显示图标和标题，点击时激活主窗口。
 
-    关键设计：
-    - host_win 为独立顶级窗口（无父），root 的 deiconify/withdraw 不影响 host_win
-    - _programmatic 标志防止程序主动操作 host_win 时触发 Map/Unmap 连锁
+    v2.9.7+ 架构：
+    - host_win 是唯一出现在任务栏的窗口（WS_EX_APPWINDOW，无 WS_EX_TOOLWINDOW）
+    - 所有其他窗口（root, content_win, panel 等）都通过 GWLP_HWNDPARENT 归属到 host_win
+    - 这样 Windows 从一开始就知道只有 host_win 是任务栏窗口，彻底杜绝双窗口问题
     """
 
     def __init__(self, app):
@@ -24,10 +25,14 @@ class TaskbarHost:
         self._programmatic = False
         self._create()
 
+    def get_hwnd(self):
+        """返回真正的顶层 HWND（TkTopLevel），供其他窗口设置所有者。"""
+        return self._real_host_hwnd
+
     def _create(self):
         """创建任务栏代理窗口（独立顶级窗口，确保任务栏图标稳定显示）"""
-        # 无父窗口：root 的 deiconify/withdraw 不会连锁触发 host_win 的 Map/Unmap
         self.host_win = tk.Toplevel()
+        self.host_win.withdraw()
         self.host_win.title(APP_NAME)
         if self.app.icon_path and os.path.exists(self.app.icon_path):
             try:
@@ -39,13 +44,22 @@ class TaskbarHost:
         self.host_win.update_idletasks()
         self._host_hwnd = self.host_win.winfo_id()
 
-        ex_style = user32.GetWindowLongW(self._host_hwnd, GWL_EXSTYLE)
+        # v2.9.7: 对真正的 TkTopLevel 窗口设置任务栏样式
+        # 因为 winfo_id() 返回的是 TkChild，而任务栏注册的是 TkTopLevel
+        try:
+            real_hwnd = user32.GetAncestor(self._host_hwnd, GA_ROOT)
+        except Exception:
+            real_hwnd = self._host_hwnd
+        self._real_host_hwnd = real_hwnd
+
+        # 确保任务栏样式：WS_EX_APPWINDOW + 去除 WS_EX_TOOLWINDOW
+        ex_style = user32.GetWindowLongW(real_hwnd, GWL_EXSTYLE)
         ex_style |= WS_EX_LAYERED
         ex_style |= WS_EX_APPWINDOW
         ex_style &= ~WS_EX_TOOLWINDOW
-        user32.SetWindowLongW(self._host_hwnd, GWL_EXSTYLE, ex_style)
-        user32.SetLayeredWindowAttributes(self._host_hwnd, 0, 0, LWA_ALPHA)
-        user32.SetWindowPos(self._host_hwnd, 0, 0, 0, 0, 0,
+        user32.SetWindowLongW(real_hwnd, GWL_EXSTYLE, ex_style)
+        user32.SetLayeredWindowAttributes(real_hwnd, 0, 0, LWA_ALPHA)
+        user32.SetWindowPos(real_hwnd, 0, 0, 0, 0, 0,
                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
         self.host_win.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -119,13 +133,14 @@ class TaskbarHost:
             self._programmatic = False
 
     def _ensure_taskbar_style(self):
-        """确保 host_win 的 WS_EX_APPWINDOW 样式生效，防止任务栏出现重复条目"""
+        """确保 host_win 的 WS_EX_APPWINDOW 样式生效，防止任务栏出现重复条目。
+        v2.9.7: 对真正的 TkTopLevel 窗口设置。"""
         try:
-            ex = user32.GetWindowLongW(self._host_hwnd, GWL_EXSTYLE)
+            ex = user32.GetWindowLongW(self._real_host_hwnd, GWL_EXSTYLE)
             ex |= WS_EX_APPWINDOW
             ex &= ~WS_EX_TOOLWINDOW
-            user32.SetWindowLongW(self._host_hwnd, GWL_EXSTYLE, ex)
-            user32.SetWindowPos(self._host_hwnd, 0, 0, 0, 0, 0,
+            user32.SetWindowLongW(self._real_host_hwnd, GWL_EXSTYLE, ex)
+            user32.SetWindowPos(self._real_host_hwnd, 0, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
         except Exception:
             pass
