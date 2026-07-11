@@ -16,15 +16,18 @@ class RootWindowMixin:
             pass
         self.root.attributes("-topmost", True)
         self.content_win.attributes("-topmost", True)
+        if hasattr(self, 'bg_win') and self.bg_win:
+            self.bg_win.attributes("-topmost", True)
         self.root.lift()
         self.content_win.lift()
+        if hasattr(self, 'bg_win') and self.bg_win:
+            self.bg_win.lift()
+            self.bg_win.lower()
         self.root.after(80, lambda: (
             self.root.attributes("-topmost", self.cfg['topmost']),
             self.content_win.attributes("-topmost", self.cfg['topmost'])
         ))
         self.handle_win.lift()
-        if self.cfg['show_panel']:
-            self.panel.lift()
 
     # -------------------------------------------------------------------------
     # 主窗口
@@ -85,44 +88,71 @@ class RootWindowMixin:
         self.root.bind("<Configure>", self._on_window_configure)
 
     def _apply_window_style(self):
-        try:
-            bg_op = max(0.05, self.cfg['bg_opacity'])
+        """B20: 分离背景窗口和内容窗口的透明属性。
 
+        - bg_win: LWA_ALPHA，alpha = bg_opacity，背景色 = raw_bg
+        - content_win: LWA_COLORKEY only（无 LWA_ALPHA），背景透明
+        - 易读模式下 bg_win alpha=0（完全透明）
+        """
+        try:
+            bg_op = max(0.0, self.cfg['bg_opacity'])
+
+            # 计算实际背景色（含反色）
+            raw_bg = self.cfg['bg_color']
+            if self.cfg['invert_mode']:
+                raw_bg = invert_color(raw_bg)
+
+            # ===== root 窗口：COLORKEY only =====
             self.root.attributes("-transparentcolor", COLORKEY)
             ex_style = user32.GetWindowLongW(self._root_hwnd, GWL_EXSTYLE)
-            ex_style |= WS_EX_LAYERED
-            ex_style |= WS_EX_TOOLWINDOW
+            ex_style |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex_style &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(self._root_hwnd, GWL_EXSTYLE, ex_style)
             user32.SetLayeredWindowAttributes(self._root_hwnd, COLORKEY_INT, 255, LWA_COLORKEY)
             user32.SetWindowPos(self._root_hwnd, 0, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
-            if not hasattr(self, '_content_hwnd'):
+            # ===== bg_win 背景窗口：LWA_ALPHA 控制背景透明度 =====
+            if hasattr(self, 'bg_win') and self.bg_win and self.bg_win.winfo_exists():
+                # 更新背景色
+                self.bg_win.configure(bg=raw_bg)
+                # 易读模式下背景完全透明
+                if self.cfg['read_mode']:
+                    effective_bg_op = 0.0
+                else:
+                    effective_bg_op = bg_op
+                if not hasattr(self, '_bg_hwnd') or not self._bg_hwnd:
+                    self._bg_hwnd = self.bg_win.winfo_id()
+                user32.SetLayeredWindowAttributes(
+                    self._bg_hwnd, 0, int(max(0.0, effective_bg_op) * 255), LWA_ALPHA)
+
+            # ===== content_win 内容窗口：LWA_COLORKEY only（无 LWA_ALPHA） =====
+            if not hasattr(self, '_content_hwnd') or not self._content_hwnd:
                 self._content_hwnd = self.content_win.winfo_id()
             ex2 = user32.GetWindowLongW(self._content_hwnd, GWL_EXSTYLE)
-            ex2 |= WS_EX_LAYERED
-            ex2 |= WS_EX_TOOLWINDOW
+            ex2 |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex2 &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(self._content_hwnd, GWL_EXSTYLE, ex2)
-            user32.SetLayeredWindowAttributes(self._content_hwnd, COLORKEY_INT, int(bg_op * 255), LWA_ALPHA | LWA_COLORKEY)
+            # LWA_COLORKEY only — alpha=255（不透明），文字不受窗口 alpha 衰减
+            user32.SetLayeredWindowAttributes(self._content_hwnd, COLORKEY_INT, 255, LWA_COLORKEY)
             user32.SetWindowPos(self._content_hwnd, 0, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
+            # ===== topmost 设置 =====
             if self.cfg['topmost']:
                 self.root.attributes("-topmost", True)
                 self.content_win.attributes("-topmost", True)
+                if hasattr(self, 'bg_win') and self.bg_win:
+                    self.bg_win.attributes("-topmost", True)
                 if hasattr(self, 'handle_win') and self.handle_win:
                     self.handle_win.attributes("-topmost", True)
-                if hasattr(self, 'panel') and self.panel:
-                    self.panel.attributes("-topmost", True)
             else:
                 self.root.attributes("-topmost", False)
                 self.content_win.attributes("-topmost", False)
+                if hasattr(self, 'bg_win') and self.bg_win:
+                    self.bg_win.attributes("-topmost", False)
                 if hasattr(self, 'handle_win') and self.handle_win:
                     self.handle_win.attributes("-topmost", False)
-                if hasattr(self, 'panel') and self.panel:
-                    self.panel.attributes("-topmost", False)
 
             if hasattr(self, '_taskbar_host') and self._taskbar_host:
                 self._taskbar_host.sync()
@@ -150,7 +180,7 @@ class RootWindowMixin:
             self._resize_after_id = self.root.after(30, self._on_window_resized)
 
     def _sync_content_window(self):
-        """同步内容窗口与背景窗口的位置和大小"""
+        """同步内容窗口和背景窗口与根窗口的位置和大小"""
         try:
             if hasattr(self, 'content_win') and self.content_win and self.content_win.winfo_exists():
                 x = self.root.winfo_x()
@@ -158,6 +188,14 @@ class RootWindowMixin:
                 w = self.root.winfo_width()
                 h = self.root.winfo_height()
                 self.content_win.geometry(f"{w}x{h}+{x}+{y}")
+            # B20: 同步背景窗口
+            if hasattr(self, 'bg_win') and self.bg_win and self.bg_win.winfo_exists():
+                x = self.root.winfo_x()
+                y = self.root.winfo_y()
+                w = self.root.winfo_width()
+                h = self.root.winfo_height()
+                self.bg_win.geometry(f"{w}x{h}+{x}+{y}")
+                self.bg_win.lower()
         except Exception as e:
             print(f"[同步内容窗口] 失败: {e}")
 

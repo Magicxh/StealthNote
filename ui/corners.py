@@ -73,13 +73,11 @@ class CornersMixin:
         if self.cfg['invert_mode']:
             color = invert_color(color)
         corner_op = self.cfg['corner_opacity']
-        # 补偿法：抵消 content_win LWA_ALPHA 对框线的二次衰减
+        # B20: 直接预乘，无补偿法（content_win 无 LWA_ALPHA）
         raw_bg = self.cfg['bg_color']
         if self.cfg['invert_mode']:
             raw_bg = invert_color(raw_bg)
-        bg_op = max(0.05, self.cfg['bg_opacity'])
-        effective_corner_op = min(1.0, corner_op / max(0.01, bg_op))
-        color = mix_color(color, effective_corner_op, raw_bg)
+        color = mix_color(color, corner_op, raw_bg)
 
         # B17: 重新设计框线公式 —— 线条始终贯穿整个画布，避免小尺寸时重叠或缺失
         # half 为线宽的中心偏移，线条从画布边缘开始绘制

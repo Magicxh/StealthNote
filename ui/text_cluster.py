@@ -9,17 +9,43 @@ class TextClusterMixin:
     """文本框集群 Mixin：文本框、滚动条、外观"""
 
     def _init_content(self):
-        """初始化内容层窗口：content_win 使用 LWA_ALPHA 统一半透明，
-        所有子元素 bg=raw_bg 实色，保证文本交互顺滑且无黑底色差。
-        关键：四角画布/热区在文本容器之前创建，确保天然位于文本之下，不会遮挡文字。"""
+        """B20: 分离背景窗口架构。
+
+        - bg_win: LWA_ALPHA，仅显示半透明背景色，alpha = bg_opacity
+        - content_win: LWA_COLORKEY only（无 LWA_ALPHA），背景透明，
+          文字/框线通过 mix_color 预乘透明度，不被 LWA_ALPHA 二次衰减。
+
+        背景透明度和文字透明度完全独立控制，互不影响。
+        背景颜色作为独立变量存储在 bg_win，为后续屏幕选色匹配功能预留接口。
+        """
         raw_bg = self.cfg['bg_color']
+
+        # ===== 背景窗口 bg_win：LWA_ALPHA 控制背景透明度 =====
+        self.bg_win = tk.Toplevel(self.root)
+        self.bg_win.withdraw()
+        self.bg_win.overrideredirect(True)
+        self.bg_win.configure(bg=raw_bg, bd=0, highlightthickness=0)
+        self.bg_win.attributes("-topmost", True)
+        self.bg_win.update_idletasks()
+        self._bg_hwnd = self.bg_win.winfo_id()
+        try:
+            ex_bg = user32.GetWindowLongW(self._bg_hwnd, GWL_EXSTYLE)
+            ex_bg |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
+            ex_bg &= ~WS_EX_APPWINDOW
+            user32.SetWindowLongW(self._bg_hwnd, GWL_EXSTYLE, ex_bg)
+            user32.SetLayeredWindowAttributes(self._bg_hwnd, 0,
+                                              int(self.cfg['bg_opacity'] * 255), LWA_ALPHA)
+        except Exception:
+            pass
+
+        # ===== 内容窗口 content_win：LWA_COLORKEY only（无 LWA_ALPHA） =====
         self.content_win = tk.Toplevel(self.root)
         self.content_win.withdraw()
         self.content_win.overrideredirect(True)
-        self.content_win.configure(bg=raw_bg, bd=0, highlightthickness=0)
+        self.content_win.configure(bg=COLORKEY, bd=0, highlightthickness=0)
         self.content_win.attributes("-topmost", True)
 
-        self.content_frame = tk.Frame(self.content_win, bg=raw_bg, bd=0, highlightthickness=0)
+        self.content_frame = tk.Frame(self.content_win, bg=COLORKEY, bd=0, highlightthickness=0)
         self.content_frame.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
         # ===== 四角框线画布和热区 =====
@@ -37,14 +63,14 @@ class TextClusterMixin:
 
         for name, cursor in corners:
             # 热区：仅保留角落 14x14，用于触发缩放
-            frame = tk.Frame(self.content_frame, bg=raw_bg, bd=0, highlightthickness=0)
+            frame = tk.Frame(self.content_frame, bg=COLORKEY, bd=0, highlightthickness=0)
             frame.bind("<ButtonPress-1>", lambda e, n=name: self._on_resize_start(e, n))
             frame.bind("<B1-Motion>", self._on_resize)
             frame.bind("<ButtonRelease-1>", self._on_resize_end)
             frame.bind("<Motion>", self._on_content_motion)
 
             # 视觉画布：独立绘制单个角的框线
-            canvas = tk.Canvas(self.content_frame, bg=raw_bg, highlightthickness=0, bd=0, cursor=cursor)
+            canvas = tk.Canvas(self.content_frame, bg=COLORKEY, highlightthickness=0, bd=0, cursor=cursor)
             canvas.bind("<ButtonPress-1>", lambda e, n=name: self._on_resize_start(e, n))
             canvas.bind("<B1-Motion>", self._on_resize)
             canvas.bind("<ButtonRelease-1>", self._on_resize_end)
@@ -53,12 +79,12 @@ class TextClusterMixin:
             self._corner_frames[name] = frame
             self._corner_canvases[name] = canvas
 
-        self.text_container = tk.Frame(self.content_frame, bg=raw_bg, bd=0, highlightthickness=0)
+        self.text_container = tk.Frame(self.content_frame, bg=COLORKEY, bd=0, highlightthickness=0)
         self.text_container.pack(fill="both", expand=True, padx=TEXT_PAD_X, pady=TEXT_PAD_Y)
 
         self.text = tk.Text(
             self.text_container,
-            bg=raw_bg,
+            bg=COLORKEY,
             fg="#FFFFFF",
             insertbackground="#FFFFFF",
             selectbackground="#3399FF",
@@ -77,13 +103,13 @@ class TextClusterMixin:
 
         # ===== 隐写框集群 =====
         # 隐写容器：独立于文本框容器，切换模式时显示/隐藏
-        self.stealth_container = tk.Frame(self.content_frame, bg=raw_bg, bd=0, highlightthickness=0)
+        self.stealth_container = tk.Frame(self.content_frame, bg=COLORKEY, bd=0, highlightthickness=0)
 
         # 隐写文本框：无框，继承普通文本框样式，宽度填充，高度由行数决定
         # 垂直内边距设为 0，确保 winfo_reqheight / metrics 能精确对应行数
         self.stealth_text = tk.Text(
             self.stealth_container,
-            bg=raw_bg,
+            bg=COLORKEY,
             fg="#FFFFFF",
             insertbackground="#FFFFFF",
             selectbackground="#3399FF",
@@ -116,11 +142,11 @@ class TextClusterMixin:
         self._normal_window_height = None
 
         # 自定义滚动条
-        self.sb_container = tk.Frame(self.content_frame, bg=raw_bg, bd=0, highlightthickness=0,
+        self.sb_container = tk.Frame(self.content_frame, bg=COLORKEY, bd=0, highlightthickness=0,
                                      width=SCROLLBAR_WIDTH + SCROLLBAR_PAD_RIGHT * 2)
         self.sb_container.place(relx=1.0, rely=0.0, anchor="ne", x=0, y=0, relheight=1.0)
 
-        self._sb_canvas = tk.Canvas(self.sb_container, bg=raw_bg, highlightthickness=0, bd=0,
+        self._sb_canvas = tk.Canvas(self.sb_container, bg=COLORKEY, highlightthickness=0, bd=0,
                                     width=SCROLLBAR_WIDTH)
         self._sb_canvas.pack(side="right", fill="y", padx=(0, SCROLLBAR_PAD_RIGHT))
 
@@ -162,16 +188,20 @@ class TextClusterMixin:
         self._create_context_menu()
 
         self.content_win.update_idletasks()
-        # B18: 立即设置 WS_EX_TOOLWINDOW，避免 content_win 出现在任务栏
+        # B18/B20: 立即设置 WS_EX_TOOLWINDOW + LWA_COLORKEY only（无 LWA_ALPHA）
         try:
             _content_hwnd = self.content_win.winfo_id()
             ex_style = user32.GetWindowLongW(_content_hwnd, GWL_EXSTYLE)
-            ex_style |= WS_EX_TOOLWINDOW
+            ex_style |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex_style &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(_content_hwnd, GWL_EXSTYLE, ex_style)
+            # LWA_COLORKEY only — 无 LWA_ALPHA，文字不受窗口 alpha 衰减
+            user32.SetLayeredWindowAttributes(_content_hwnd, COLORKEY_INT, 255, LWA_COLORKEY)
         except Exception:
             pass
         self.content_win.deiconify()
+        self.bg_win.deiconify()
+        self.bg_win.lower()  # 确保背景窗口在内容窗口之下
 
         # 内容窗口也需要响应四角缩放与滚轮（根窗口可能被内容窗口遮挡）
         self.content_win.bind("<ButtonPress-1>", self._on_content_button_press)
@@ -203,30 +233,37 @@ class TextClusterMixin:
             return bg
 
     def _apply_text_appearance(self):
-        """应用文本外观设置（反色、易读模式与基础属性叠加，不修改模式开关）"""
-        # 原始背景色（不含透明度预乘），content_win 的 LWA_ALPHA 负责实际半透明
+        """B20: 应用文本外观设置。
+
+        content_win 使用 LWA_COLORKEY only（无 LWA_ALPHA），背景透明。
+        文字颜色直接通过 mix_color 预乘 text_opacity，不被 LWA_ALPHA 二次衰减。
+        背景颜色和透明度由 bg_win 独立控制（在 _apply_window_style 中设置）。
+        """
+        # B22: 保存当前滚动位置，防止 configure 时重置
+        try:
+            scroll_pos = self.text.yview()
+        except Exception:
+            scroll_pos = (0.0, 1.0)
+
+        # 原始背景色（用于 mix_color 混合参考，实际背景由 bg_win 显示）
         raw_bg = self.cfg['bg_color']
         if self.cfg['invert_mode']:
             raw_bg = invert_color(raw_bg)
 
-        # 文字颜色补偿法：content_win 的 LWA_ALPHA 会对整个窗口（含文字）二次衰减，
-        # 最终文字透明度 = effective_fg_op × bg_op。希望最终 = fg_op（仅由 text_opacity 控制），
-        # 所以 effective_fg_op = min(1.0, fg_op / bg_op)，抵消 LWA_ALPHA 的影响。
+        # 文字颜色：直接预乘 text_opacity，无 LWA_ALPHA 二次衰减
         tc = self.cfg['text_color']
         if self.cfg['invert_mode']:
             tc = invert_color(tc)
         fg_op = self.cfg['text_opacity']
-        bg_op = max(0.05, self.cfg['bg_opacity'])
-        effective_fg_op = min(1.0, fg_op / max(0.01, bg_op))
-        fg_color = mix_color(tc, effective_fg_op, raw_bg)
+        fg_color = mix_color(tc, fg_op, raw_bg)
 
         # 更醒目的选区颜色
         sel_bg = mix_color("#3399FF", 0.85, raw_bg)
         sel_fg = "#FFFFFF"
 
-        # 文本框背景：raw_bg 实色（content_win 使用 LWA_ALPHA 控制透明度）
-        text_bg = raw_bg
-        stealth_bg = raw_bg
+        # 文本框背景：COLORKEY（透明），背景由 bg_win 负责
+        text_bg = COLORKEY
+        stealth_bg = COLORKEY
 
         self.text.configure(
             bg=text_bg,
@@ -246,11 +283,11 @@ class TextClusterMixin:
                 font=(self.cfg['text_font'], self.cfg['text_size'])
             )
 
-        # 容器背景：raw_bg 实色（content_win 使用 LWA_ALPHA 控制透明度）
+        # 容器背景：COLORKEY（透明）
         if hasattr(self, 'text_container') and self.text_container:
-            self.text_container.configure(bg=raw_bg)
+            self.text_container.configure(bg=COLORKEY)
         if hasattr(self, 'stealth_container') and self.stealth_container:
-            self.stealth_container.configure(bg=raw_bg)
+            self.stealth_container.configure(bg=COLORKEY)
 
         # 易读模式背景
         if self.cfg['read_mode']:
@@ -270,6 +307,7 @@ class TextClusterMixin:
             if abs(new_h - self.root.winfo_height()) > 2:
                 self.root.geometry(f"{ww}x{new_h}")
                 self.content_win.geometry(f"{ww}x{new_h}")
+                self.bg_win.geometry(f"{ww}x{new_h}")
                 self._corner_dirty = True
                 self._update_corners()
                 self._layout_handle()
@@ -277,20 +315,28 @@ class TextClusterMixin:
         if self._sb_visible:
             self._redraw_scrollbar()
 
+        # B22: 恢复滚动位置
+        try:
+            self.text.yview_moveto(scroll_pos[0])
+        except Exception:
+            pass
+
     def _apply_read_mode_bg(self):
-        """易读模式：仅在有文字的行显示背景色（反色优先叠加）"""
+        """B20/B24: 易读模式 — 仅在有文字的行显示背景色。
+
+        content_win 背景为 COLORKEY（透明），易读背景通过 Text tag 实现。
+        颜色直接预乘 read_bg_opacity，无 LWA_ALPHA 二次衰减。
+        """
         try:
             row_bg = self.cfg['read_bg_color']
             if self.cfg['invert_mode']:
                 row_bg = invert_color(row_bg)
             read_op = self.cfg['read_bg_opacity']
-            # 补偿法：抵消 content_win LWA_ALPHA 对易读背景的二次衰减
+            # 直接预乘，无补偿法（content_win 无 LWA_ALPHA）
             raw_bg = self.cfg['bg_color']
             if self.cfg['invert_mode']:
                 raw_bg = invert_color(raw_bg)
-            bg_op = max(0.05, self.cfg['bg_opacity'])
-            effective_read_op = min(1.0, read_op / max(0.01, bg_op))
-            row_bg = mix_color(row_bg, effective_read_op, raw_bg)
+            row_bg = mix_color(row_bg, read_op, raw_bg)
 
             for widget in [self.text, getattr(self, 'stealth_text', None)]:
                 if not widget or not widget.winfo_exists():

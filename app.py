@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stealth Note v2.8.4 - 主应用类"""
+"""Stealth Note v2.9.0 - 主应用类"""
 
 import os
 import sys
@@ -278,22 +278,33 @@ class StealthNoteApp(
 
     def _show_window(self):
         self.root.deiconify()
+        if hasattr(self, 'bg_win') and self.bg_win:
+            self.bg_win.deiconify()
+            self.bg_win.lower()
         self.content_win.deiconify()
         self.handle_win.deiconify()
         if self.cfg['show_panel']:
             self.panel.deiconify()
         self._window_visible = True
-        self._sync_content_window()
-
-        self._force_foreground()
-        if self.cfg.get('stealth_mode') and self.stealth_text.winfo_viewable():
-            self.stealth_text.focus_set()
+        # B26: 如果书写框被双击隐藏，恢复时保持隐藏
+        if getattr(self, '_text_hidden', False):
+            self.root.withdraw()
+            if hasattr(self, 'bg_win') and self.bg_win:
+                self.bg_win.withdraw()
+            self.content_win.withdraw()
         else:
-            self.text.focus_set()
+            self._sync_content_window()
+            self._force_foreground()
+            if self.cfg.get('stealth_mode') and self.stealth_text.winfo_viewable():
+                self.stealth_text.focus_set()
+            else:
+                self.text.focus_set()
         self._taskbar_host.sync()
 
     def _hide_window(self):
         self.root.withdraw()
+        if hasattr(self, 'bg_win') and self.bg_win:
+            self.bg_win.withdraw()
         self.content_win.withdraw()
         self.handle_win.withdraw()
         if self.cfg['show_panel']:

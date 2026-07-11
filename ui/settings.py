@@ -34,6 +34,16 @@ class SettingsMixin:
         self._settings_win.resizable(True, True)
         self._settings_win.minsize(600, 700)
 
+        # B23: 设置窗口不显示在任务栏
+        try:
+            from constants import GWL_EXSTYLE, WS_EX_TOOLWINDOW, user32
+            _settings_hwnd = self._settings_win.winfo_id()
+            ex = user32.GetWindowLongW(_settings_hwnd, GWL_EXSTYLE)
+            ex |= WS_EX_TOOLWINDOW
+            user32.SetWindowLongW(_settings_hwnd, GWL_EXSTYLE, ex)
+        except Exception:
+            pass
+
         if self.icon_path and os.path.exists(self.icon_path):
             try:
                 self._settings_win.iconbitmap(self.icon_path)
@@ -165,10 +175,9 @@ class SettingsMixin:
     def _do_refresh_preview(self):
         """实际执行预览刷新。
         B14/B15 修复：预览期间保持 _preview_cfg 为当前 cfg，不在 finally 中恢复。
-        原始配置由 _original_cfg 保存，仅在用户点击"取消"时恢复。
+        B22 修复：不调用 see("1.0")，保持滚动位置。
         """
         self._preview_after_id = None
-        # 直接使用 _preview_cfg 作为当前 cfg，预览效果持续生效
         self.cfg = self._preview_cfg
         try:
             self._apply_window_style()
@@ -194,9 +203,8 @@ class SettingsMixin:
 
             self.root.attributes("-topmost", self._preview_cfg['topmost'])
 
-            if self._preview_cfg['show_scrollbar']:
-                self.text.see("1.0")
-            else:
+            # B22: 不调用 see("1.0")，保持当前滚动位置
+            if not self._preview_cfg['show_scrollbar']:
                 self._set_scrollbar_visible(False)
 
             if self._preview_cfg['show_panel']:

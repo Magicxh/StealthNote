@@ -50,6 +50,7 @@ class HandleMixin:
         self.handle_canvas.bind("<ButtonPress-1>", self._on_handle_press)
         self.handle_canvas.bind("<B1-Motion>", self._on_handle_drag)
         self.handle_canvas.bind("<ButtonRelease-1>", self._on_handle_release)
+        self.handle_canvas.bind("<Double-Button-1>", self._on_handle_double_click)
         self.handle_canvas.bind("<MouseWheel>", self._on_handle_wheel)
         self.handle_canvas.bind("<Button-3>", self._show_handle_menu)
         self.handle_canvas.bind("<Button-2>", lambda e: self.toggle_stealth())
@@ -222,16 +223,18 @@ class HandleMixin:
             pass
         self.root.attributes("-topmost", True)
         self.content_win.attributes("-topmost", True)
+        if hasattr(self, 'bg_win') and self.bg_win:
+            self.bg_win.attributes("-topmost", True)
         self.root.after(50, lambda: (
             self.root.attributes("-topmost", self.cfg['topmost']),
             self.content_win.attributes("-topmost", self.cfg['topmost'])
         ))
         self.root.lift()
         self.content_win.lift()
+        if hasattr(self, 'bg_win') and self.bg_win:
+            self.bg_win.lift()
+            self.bg_win.lower()
         self.handle_win.lift()
-        if self.cfg['show_panel']:
-            self.panel.attributes("-topmost", True)
-            self.panel.lift()
 
     def _on_handle_drag(self, event):
         if not self._drag_active:
@@ -247,6 +250,56 @@ class HandleMixin:
             self.cfg['window_y'] = self.root.winfo_y()
             self._save_config_debounced()
             self._drag_active = False
+
+    def _on_handle_double_click(self, event):
+        """B26: 双击手柄切换书写框隐藏/显示。
+
+        3种工况：常规文本框 / 隐写框 / 都不显示。
+        双击在"显示"和"都不显示"之间切换。
+        恢复时以手柄为参考的相对位置显示。
+        """
+        self._toggle_text_hidden()
+
+    def _toggle_text_hidden(self):
+        """切换书写框的隐藏/显示状态。"""
+        if not hasattr(self, '_text_hidden'):
+            self._text_hidden = False
+            self._hidden_window_geo = None
+
+        if not self._text_hidden:
+            # 隐藏书写框：保存当前窗口位置和大小
+            self._hidden_window_geo = (
+                self.root.winfo_x(),
+                self.root.winfo_y(),
+                self.root.winfo_width(),
+                self.root.winfo_height()
+            )
+            self.root.withdraw()
+            if hasattr(self, 'bg_win') and self.bg_win:
+                self.bg_win.withdraw()
+            self.content_win.withdraw()
+            self._text_hidden = True
+        else:
+            # 恢复书写框：以手柄为参考的相对位置显示
+            self.root.deiconify()
+            if hasattr(self, 'bg_win') and self.bg_win:
+                self.bg_win.deiconify()
+                self.bg_win.lower()
+            self.content_win.deiconify()
+
+            # 恢复到之前保存的位置
+            if self._hidden_window_geo:
+                x, y, w, h = self._hidden_window_geo
+                self.root.geometry(f"{w}x{h}+{x}+{y}")
+                self.content_win.geometry(f"{w}x{h}+{x}+{y}")
+                if hasattr(self, 'bg_win') and self.bg_win:
+                    self.bg_win.geometry(f"{w}x{h}+{x}+{y}")
+                    self.bg_win.lower()
+
+            self._sync_content_window()
+            self._text_hidden = False
+            self._force_foreground()
+            self._focus_text()
 
     def _is_left_button_held(self):
         """检测鼠标左键是否按下"""

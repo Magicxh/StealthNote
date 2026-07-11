@@ -82,6 +82,7 @@ class StealthClusterMixin:
             wy = self.root.winfo_y()
             self.root.geometry(f"{self.root.winfo_width()}x{new_h}")
             self.content_win.geometry(f"{self.root.winfo_width()}x{new_h}")
+            self.bg_win.geometry(f"{self.root.winfo_width()}x{new_h}")
             self.content_win.update_idletasks()
             self._corner_dirty = True
             self._update_corners()
@@ -255,6 +256,7 @@ class StealthClusterMixin:
             new_h = self._calc_stealth_window_height()
             self.root.geometry(f"{ww}x{new_h}")
             self.content_win.geometry(f"{ww}x{new_h}")
+            self.bg_win.geometry(f"{ww}x{new_h}")
             self.content_win.update_idletasks()
 
             self.stealth_text.focus_set()
@@ -285,6 +287,7 @@ class StealthClusterMixin:
                 new_h = max(MIN_WINDOW_H, self.cfg.get('window_height', 400))
             self.root.geometry(f"{ww}x{new_h}")
             self.content_win.geometry(f"{ww}x{new_h}")
+            self.bg_win.geometry(f"{ww}x{new_h}")
 
             self.text.focus_set()
             self._corner_dirty = True
@@ -326,6 +329,7 @@ class StealthClusterMixin:
                 new_h = self._calc_stealth_window_height()
                 self.root.geometry(f"{ww}x{new_h}")
                 self.content_win.geometry(f"{ww}x{new_h}")
+                self.bg_win.geometry(f"{ww}x{new_h}")
                 self.content_win.update_idletasks()
                 self._corner_dirty = True
                 self._update_corners()

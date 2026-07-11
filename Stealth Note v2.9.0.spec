@@ -36,7 +36,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Stealth Note v2.8.5',
+    name='Stealth Note v2.9.0',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

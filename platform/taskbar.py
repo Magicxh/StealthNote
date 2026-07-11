@@ -3,7 +3,8 @@
 import os
 import tkinter as tk
 from constants import (
-    APP_NAME, GWL_EXSTYLE, WS_EX_LAYERED, LWA_ALPHA, user32,
+    APP_NAME, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    LWA_ALPHA, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_FRAMECHANGED, user32,
 )
 from utils import set_layered_transparent
 
@@ -35,8 +36,12 @@ class TaskbarHost:
 
         ex_style = user32.GetWindowLongW(self._host_hwnd, GWL_EXSTYLE)
         ex_style |= WS_EX_LAYERED
+        ex_style |= WS_EX_APPWINDOW  # B23: 确保显示在任务栏
+        ex_style &= ~WS_EX_TOOLWINDOW  # B23: 清除工具窗口样式
         user32.SetWindowLongW(self._host_hwnd, GWL_EXSTYLE, ex_style)
         user32.SetLayeredWindowAttributes(self._host_hwnd, 0, 0, LWA_ALPHA)
+        user32.SetWindowPos(self._host_hwnd, 0, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
         self.host_win.protocol("WM_DELETE_WINDOW", self._on_close)
         self.host_win.bind("<Unmap>", self._on_unmap)
