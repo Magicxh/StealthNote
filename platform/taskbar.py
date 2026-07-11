@@ -92,6 +92,7 @@ class TaskbarHost:
             self._programmatic = True
             try:
                 self.host_win.deiconify()
+                self._ensure_taskbar_style()
                 self.host_win.lower()
             finally:
                 self._programmatic = False
@@ -110,11 +111,24 @@ class TaskbarHost:
         try:
             if visible:
                 self.host_win.deiconify()
+                self._ensure_taskbar_style()
                 self.host_win.lower()
             else:
                 self.host_win.withdraw()
         finally:
             self._programmatic = False
+
+    def _ensure_taskbar_style(self):
+        """确保 host_win 的 WS_EX_APPWINDOW 样式生效，防止任务栏出现重复条目"""
+        try:
+            ex = user32.GetWindowLongW(self._host_hwnd, GWL_EXSTYLE)
+            ex |= WS_EX_APPWINDOW
+            ex &= ~WS_EX_TOOLWINDOW
+            user32.SetWindowLongW(self._host_hwnd, GWL_EXSTYLE, ex)
+            user32.SetWindowPos(self._host_hwnd, 0, 0, 0, 0, 0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+        except Exception:
+            pass
 
     def set_title(self, title):
         """设置任务栏标题"""

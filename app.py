@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stealth Note v2.9.3 - 主应用类"""
+"""Stealth Note v2.9.4 - 主应用类"""
 
 import os
 import sys
@@ -279,7 +279,7 @@ class StealthNoteApp(
     def _show_window(self):
         self.root.deiconify()
         self.content_win.deiconify()
-        self.handle_win.deiconify()
+        self._deiconify_handle()
         if self.cfg['show_panel']:
             self.panel.deiconify()
         self._window_visible = True

@@ -99,12 +99,25 @@ class HandleMixin:
 
     def _show_handle(self):
         try:
-            self.handle_win.deiconify()
+            self._deiconify_handle()
             self.handle_win.lift()
             self._layout_handle()
             self._update_handle()
         except Exception as e:
             print(f"[手柄] 显示失败: {e}")
+
+    def _deiconify_handle(self):
+        """deiconify 手柄窗口并重新强制设置 WS_EX_TOOLWINDOW，防止出现在任务栏"""
+        self.handle_win.deiconify()
+        try:
+            ex = user32.GetWindowLongW(self._handle_hwnd, GWL_EXSTYLE)
+            ex |= WS_EX_TOOLWINDOW
+            ex &= ~WS_EX_APPWINDOW
+            user32.SetWindowLongW(self._handle_hwnd, GWL_EXSTYLE, ex)
+            user32.SetWindowPos(self._handle_hwnd, 0, 0, 0, 0, 0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+        except Exception:
+            pass
 
     def _layout_handle(self):
         # 取消之前的延迟布局，实现防抖（拖动期间避免频繁 winfo 调用）
