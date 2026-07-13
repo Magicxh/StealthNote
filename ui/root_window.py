@@ -196,15 +196,17 @@ class RootWindowMixin:
             ex2 |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex2 &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(real_content, GWL_EXSTYLE, ex2)
-            # 易读模式下背景完全透明
+            # 易读模式下背景完全透明，仅用 LWA_COLORKEY（不用 LWA_ALPHA）
+            # LWA_ALPHA with alpha=0 会让整个窗口（含文字）完全透明
             if self.cfg['read_mode']:
-                effective_bg_op = 0.0
+                user32.SetLayeredWindowAttributes(
+                    self._content_hwnd, COLORKEY_INT, 255,
+                    LWA_COLORKEY)
             else:
-                effective_bg_op = bg_op
-            # LWA_ALPHA | LWA_COLORKEY：alpha 控制整体半透明，COLORKEY(#010101) 穿透
-            user32.SetLayeredWindowAttributes(
-                self._content_hwnd, COLORKEY_INT, int(max(0.0, effective_bg_op) * 255),
-                LWA_ALPHA | LWA_COLORKEY)
+                # LWA_ALPHA | LWA_COLORKEY：alpha 控制整体半透明，COLORKEY(#010101) 穿透
+                user32.SetLayeredWindowAttributes(
+                    self._content_hwnd, COLORKEY_INT, int(max(0.0, bg_op) * 255),
+                    LWA_ALPHA | LWA_COLORKEY)
             user32.SetWindowPos(self._content_hwnd, 0, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 

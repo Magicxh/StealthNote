@@ -107,7 +107,8 @@ class TextClusterMixin:
             exportselection=True,
         )
         # 顶部锚定，确保单行模式下文本位于容器顶端，横线可正确绘制在文字下方
-        self.stealth_text.pack(side="left", fill="x", expand=False, anchor="n")
+        # fill="both", expand=True 确保文本框填满整个容器，右半部分可正常点击
+        self.stealth_text.pack(side="left", fill="both", expand=True, anchor="n")
         # 隐写行分隔线（视觉提示：光标所在行下方）
         # 采用 1px 黑线 + 1px 白线上下叠合，总高度 2px
         # 放置在 content_frame 上，避免容器 padx 影响坐标计算
@@ -240,10 +241,16 @@ class TextClusterMixin:
         sel_bg = mix_color("#3399FF", 0.85, raw_bg)
         sel_fg = "#FFFFFF"
 
-        # 文本框背景：raw_bg 实色（content_win 的 LWA_ALPHA 控制透明度）
-        # 抗锯齿相对于 raw_bg，无毛边
-        text_bg = raw_bg
-        stealth_bg = raw_bg
+        # 文本框背景：易读模式下用 COLORKEY（被 LWA_COLORKEY 透明化），
+        # 普通模式下用 raw_bg 实色（content_win 的 LWA_ALPHA 控制透明度）
+        if self.cfg['read_mode']:
+            text_bg = COLORKEY
+            stealth_bg = COLORKEY
+            container_bg = COLORKEY
+        else:
+            text_bg = raw_bg
+            stealth_bg = raw_bg
+            container_bg = raw_bg
 
         self.text.configure(
             bg=text_bg,
@@ -263,11 +270,29 @@ class TextClusterMixin:
                 font=(self.cfg['text_font'], self.cfg['text_size'])
             )
 
-        # 容器背景：raw_bg（被动态 COLORKEY 透明）
+        # 容器背景：易读模式下用 COLORKEY，普通模式下用 raw_bg
         if hasattr(self, 'text_container') and self.text_container:
-            self.text_container.configure(bg=raw_bg)
+            self.text_container.configure(bg=container_bg)
         if hasattr(self, 'stealth_container') and self.stealth_container:
-            self.stealth_container.configure(bg=raw_bg)
+            self.stealth_container.configure(bg=container_bg)
+        # content_win 和 content_frame 也需同步背景色
+        if hasattr(self, 'content_win') and self.content_win:
+            self.content_win.configure(bg=container_bg)
+        if hasattr(self, 'content_frame') and self.content_frame:
+            self.content_frame.configure(bg=container_bg)
+        # 四角画布和热区也需同步
+        if hasattr(self, '_corner_frames'):
+            for f in self._corner_frames.values():
+                try:
+                    f.configure(bg=container_bg)
+                except Exception:
+                    pass
+        if hasattr(self, '_corner_canvases'):
+            for c in self._corner_canvases.values():
+                try:
+                    c.configure(bg=container_bg)
+                except Exception:
+                    pass
 
         # 易读模式背景
         if self.cfg['read_mode']:

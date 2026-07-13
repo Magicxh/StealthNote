@@ -209,9 +209,15 @@ class HandleMixin:
 
     def _on_handle_press(self, event):
         self._drag_active = True
-        offset = self._get_handle_offset()
-        self._drag_dx = event.x_root - (self.root.winfo_x() + offset)
-        self._drag_dy = event.y_root - self.root.winfo_y()
+        if getattr(self, '_text_hidden', False) and self._hidden_window_geo:
+            # 隐藏状态下 root 已缩小到手柄大小，winfo_x/y 返回手柄位置而非文本区位置
+            # 必须基于 _hidden_window_geo 计算拖动偏移
+            self._drag_dx = event.x_root - self._hidden_window_geo[0]
+            self._drag_dy = event.y_root - self._hidden_window_geo[1]
+        else:
+            offset = self._get_handle_offset()
+            self._drag_dx = event.x_root - (self.root.winfo_x() + offset)
+            self._drag_dy = event.y_root - self.root.winfo_y()
         self._lift_all()
         if self.cfg.get('stealth_mode') and self.stealth_text.winfo_viewable():
             self.stealth_text.focus_set()
@@ -314,6 +320,9 @@ class HandleMixin:
                 root_h = h
                 self.root.geometry(f"{root_w}x{root_h}+{root_x}+{root_y}")
                 self.content_win.geometry(f"{w}x{h}+{x}+{y}")
+                # 必须更新窗口队列，确保 winfo_x/y 返回新值
+                self.root.update_idletasks()
+                self.content_win.update_idletasks()
 
             # 重新布局手柄
             canvas_y = self._get_handle_canvas_y()
