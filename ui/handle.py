@@ -135,7 +135,15 @@ class HandleMixin:
         if root_y < 0:
             root_y = 0
 
-        self.root.geometry(f"{root_w}x{root_h}+{root_x}+{root_y}")
+        # v2.9.7.2: geometry 去重，避免 root.geometry() 触发 <Configure>
+        # 进而触发 _on_window_resized → _layout_handle → _do_layout_handle 的事件风暴循环
+        # 这是双击恢复后闪烁+假死的根因
+        cur_x = self.root.winfo_x()
+        cur_y = self.root.winfo_y()
+        cur_w = self.root.winfo_width()
+        cur_h = self.root.winfo_height()
+        if cur_x != root_x or cur_y != root_y or cur_w != root_w or cur_h != root_h:
+            self.root.geometry(f"{root_w}x{root_h}+{root_x}+{root_y}")
 
         # 手柄 Canvas 在 root 内的位置
         self.handle_canvas.place(x=0, y=canvas_y)
@@ -309,9 +317,8 @@ class HandleMixin:
             self.root.deiconify()
         else:
             offset = self._get_handle_offset()
-            self.root.deiconify()
-            self.content_win.deiconify()
-
+            # v2.9.7.2: 先设置 geometry 再 deiconify，避免窗口在旧位置闪现
+            # 此时 root 和 content_win 仍处于 withdraw 状态，设置 geometry 不会触发可见的闪烁
             if self._hidden_window_geo:
                 x, y, w, h = self._hidden_window_geo
                 root_x = x - offset
@@ -320,9 +327,13 @@ class HandleMixin:
                 root_h = h
                 self.root.geometry(f"{root_w}x{root_h}+{root_x}+{root_y}")
                 self.content_win.geometry(f"{w}x{h}+{x}+{y}")
-                # 必须更新窗口队列，确保 winfo_x/y 返回新值
+                # 更新窗口队列，确保 winfo_x/y 返回新值
                 self.root.update_idletasks()
                 self.content_win.update_idletasks()
+
+            # geometry 已就位，再显示窗口
+            self.root.deiconify()
+            self.content_win.deiconify()
 
             # 重新布局手柄
             canvas_y = self._get_handle_canvas_y()
