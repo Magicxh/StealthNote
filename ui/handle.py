@@ -93,11 +93,13 @@ class HandleMixin:
             label="双击适配背景",
             command=self.toggle_adapt_bg,
             variable=self._menu_adapt_bg_var)
+        self.handle_menu.add_separator()
         # v2.9.8.4: 深色/浅色模式切换（在反色显示上方）
         self.handle_menu.add_checkbutton(
-            label="浅色模式",
+            label="切换深色/浅色模式",
             command=self._toggle_theme_menu,
             variable=self._menu_light_mode_var)
+        self.handle_menu.add_separator()
         self.handle_menu.add_command(label="反色显示", command=self.toggle_invert)
         self.handle_menu.add_command(label="易读模式", command=self.toggle_read)
         self.handle_menu.add_command(label="置顶模式", command=self.toggle_topmost)
