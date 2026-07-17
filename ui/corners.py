@@ -20,6 +20,12 @@ class CornersMixin:
         self._update_handle()
         if self._sb_visible:
             self._redraw_scrollbar()
+        # 标题栏刷新（位置+可见性）
+        if hasattr(self, '_refresh_titlebar'):
+            self._refresh_titlebar()
+        # 状态栏刷新（位置+可见性）
+        if hasattr(self, '_refresh_statusbar'):
+            self._refresh_statusbar()
 
     def _layout_corners(self):
         # 隐写模式下完全隐藏四角线框与缩放热区
@@ -147,9 +153,10 @@ class CornersMixin:
         nw = max(MIN_WINDOW_W, nw)
         nh = max(MIN_WINDOW_H, nh)
 
-        # v2.9.7: root 窗口 = content_win 向左扩展 handle_offset
+        # v2.9.7: root 窗口 = content_win 向左扩展 handle_offset，向上扩展 root_y_offset
         offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
-        self.root.geometry(f"{nw + offset}x{nh}+{nx - offset}+{ny}")
+        root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
+        self.root.geometry(f"{nw + offset}x{nh + root_y_offset}+{nx - offset}+{ny - root_y_offset}")
 
     def _on_resize_end(self, event):
         if self._resize_edge:
@@ -247,12 +254,16 @@ class CornersMixin:
                 return False
             if not self._is_point_in_widget(widget, rx, ry):
                 return False
-            # 左键按下时调整背景透明度
+            # 左键按下时屏蔽滚轮
             if self._is_left_button_held():
+                return True
+            # 右键按下时调整背景透明度
+            if self._is_right_button_held():
+                self._right_button_wheel_used = True
                 d = 1 if delta > 0 else -1
                 new_op = max(0.0, min(1.0, self.cfg['bg_opacity'] + d * 0.05))
                 self.cfg['bg_opacity'] = round(new_op, 2)
-                self._apply_window_style()
+                self._apply_window_style_debounced()
                 self._save_config_debounced()
                 return True
             # 每次滚动一行
@@ -275,11 +286,21 @@ class CornersMixin:
         """根窗口释放：仅结束缩放。"""
         if self._resize_edge:
             self._on_resize_end(event)
-            self._on_root_motion(event)
 
     def _on_root_motion(self, event):
-        """根窗口移动：v2.9.7 root 包含手柄区域，不在 root 上显示缩放光标"""
-        pass
+        """根窗口移动：在四角热区切换鼠标指针"""
+        try:
+            edge = self._get_resize_edge_at(event.x, event.y)
+            cursor = {
+                "nw": "top_left_corner",
+                "ne": "top_right_corner",
+                "sw": "bottom_left_corner",
+                "se": "bottom_right_corner",
+            }.get(edge, "")
+            self.root.config(cursor=cursor)
+            self.content_win.config(cursor=cursor)
+        except Exception:
+            pass
 
     def _on_content_button_press(self, event):
         """内容窗口按下：仅处理四角缩放，其余情况聚焦文本框。
@@ -315,7 +336,6 @@ class CornersMixin:
 
     def _on_content_motion(self, event):
         """内容窗口移动：在四角热区切换鼠标指针"""
-        # 事件来自文本框时不干预，避免干扰文本交互
         if event.widget in (self.text, self.stealth_text):
             return
         try:

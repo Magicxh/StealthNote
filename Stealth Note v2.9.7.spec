@@ -36,7 +36,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Stealth Note v2.9.7.2',
+    name='Stealth Note v2.9.8.4',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -51,3 +51,11 @@ exe = EXE(
     entitlements_file=None,
     icon=['stealth_note.ico'],
 )
+
+# v2.9.7.5: 打包后自动清除旧配置文件，避免旧设置影响新版本调试
+# SPECPATH 是 spec 文件所在目录（PyInstaller 注入），dist 子目录即输出目录
+import os as _os
+_cfg = _os.path.join(SPECPATH, 'dist', 'stealth_note_config.json')
+if _os.path.exists(_cfg):
+    _os.remove(_cfg)
+    print(f"[构建] 已清除旧配置: {_cfg}")

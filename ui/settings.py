@@ -12,7 +12,7 @@ from constants import (
     MIN_TEXT_OPACITY, MIN_READ_BG_OPACITY, MIN_CORNER_OPACITY,
     MIN_CORNER_LINE, MIN_CORNER_LEN, MAX_CORNER_LEN, MAX_CORNER_LINE,
     MIN_HANDLE_SIZE, MAX_HANDLE_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE,
-    MIN_PANEL_OPACITY,
+    MIN_PANEL_OPACITY, PANEL_BTN_SIZE,
     GWLP_HWNDPARENT, SetWindowLongPtrW,
     GA_ROOT, user32,
 )
@@ -169,67 +169,81 @@ class SettingsMixin:
         return frame
 
     def _refresh_preview(self):
-        """实时预览设置效果（30ms 防抖，避免滑块拖动时闪烁）"""
+        """实时预览设置效果（120ms 防抖，避免滑块拖动时假死）"""
         if hasattr(self, '_preview_after_id') and self._preview_after_id:
             self.root.after_cancel(self._preview_after_id)
-        self._preview_after_id = self.root.after(30, self._do_refresh_preview)
+        self._preview_after_id = self.root.after(120, self._do_refresh_preview)
 
     def _do_refresh_preview(self):
-        """实际执行预览刷新。
-        B14/B15 修复：预览期间保持 _preview_cfg 为当前 cfg，不在 finally 中恢复。
-        B22 修复：不调用 see("1.0")，保持滚动位置。
+        """轻量预览刷新：仅更新颜色/透明度/文字外观，不做窗口尺寸/手柄布局/隐写切换。
+
+        关键优化：预览期间不切换topmost（topmost切换会导致面板闪烁），
+        topmost延迟到Apply/OK时执行。
         """
         self._preview_after_id = None
         self.cfg = self._preview_cfg
         try:
+            # 临时保持当前topmost状态不变，避免_apply_window_style中的topmost切换导致面板闪烁
+            saved_topmost = self.cfg.get('topmost')
+            self.cfg['topmost'] = bool(self.root.attributes('-topmost'))
             self._apply_window_style()
+            self.cfg['topmost'] = saved_topmost
+
             self._apply_text_appearance()
-            self._apply_stealth_state()
             self._corner_dirty = True
             self._update_corners()
             self._update_handle()
             self._update_panel_button_states()
-
+            # 标题栏刷新（外观+可见性+位置）
+            if hasattr(self, '_refresh_titlebar'):
+                self._refresh_titlebar()
+            # 状态栏刷新（外观+可见性+位置）
+            if hasattr(self, '_refresh_statusbar'):
+                self._refresh_statusbar()
             self.panel_inner.configure(bg=self._preview_cfg['panel_bg_color'])
             if not self._panel_hwnd:
                 self._panel_hwnd = self.panel.winfo_id()
             alpha = int(max(MIN_PANEL_OPACITY, self._preview_cfg['panel_opacity']) * 255)
             set_layered_transparent(self._panel_hwnd, alpha, use_colorkey=True, show_taskbar=False)
-
-            # v2.9.7: 手柄已改为 root 上的 Canvas 控件，无需单独设置透明属性
-
-            self.root.attributes("-topmost", self._preview_cfg['topmost'])
-
-            # B22: 不调用 see("1.0")，保持当前滚动位置
-            if not self._preview_cfg['show_scrollbar']:
-                self._set_scrollbar_visible(False)
-
-            if self._preview_cfg['show_panel']:
-                self.panel.deiconify()
-            else:
-                self.panel.withdraw()
-
-            self._set_taskbar_visible(self._preview_cfg['show_taskbar'])
-
-            self._layout_handle()
         except Exception as e:
             print(f"[预览] 刷新失败: {e}")
 
     def _cancel_settings(self):
-        """取消设置：恢复原始配置并关闭窗口"""
+        """取消设置：仅当配置发生变化时才恢复，避免无变化时假死"""
+        # 配置未变化→直接关闭，不做任何重绘
+        if self._preview_cfg == self._original_cfg:
+            self._settings_win.destroy()
+            return
+        # 配置有变化→恢复原始配置，先销毁窗口，再延迟重绘，避免 destroy 与重绘冲突
         self.cfg = self._original_cfg
+        self._settings_win.destroy()
+        self.root.after(50, self._restore_after_cancel)
+
+    def _restore_after_cancel(self):
+        """取消设置后延迟恢复显示，分步执行避免长时间无响应"""
         try:
+            # 第1步：窗口样式（含 taskbar sync）
             self._apply_window_style()
+            # 第2步：延迟执行其余重操作
+            self.root.after(0, self._restore_after_cancel_rest)
+        except Exception as e:
+            print(f"[取消设置] 恢复失败: {e}")
+
+    def _restore_after_cancel_rest(self):
+        """取消设置后恢复显示的第2步"""
+        try:
             self._apply_text_appearance()
             self._apply_stealth_state()
             self._corner_dirty = True
             self._update_corners()
             self._update_handle()
             self._update_panel_button_states()
-            self._set_taskbar_visible(self.cfg['show_taskbar'])
+            if hasattr(self, '_refresh_titlebar'):
+                self._refresh_titlebar()
+            if hasattr(self, '_refresh_statusbar'):
+                self._refresh_statusbar()
         except Exception as e:
-            print(f"[取消设置] 恢复失败: {e}")
-        self._settings_win.destroy()
+            print(f"[取消设置] 恢复第2步失败: {e}")
 
     def _build_tab_system(self, nb):
         f = ttk.Frame(nb, padding=12)
@@ -304,7 +318,8 @@ class SettingsMixin:
                 cp = configparser.ConfigParser()
                 cp.add_section('General')
                 for k, v in self._preview_cfg.items():
-                    cp.set('General', k, str(v))
+                    # None 值写为空字符串，避免往返后变成 "None" 字符串
+                    cp.set('General', k, '' if v is None else str(v))
                 with open(path, 'w', encoding='utf-8') as f:
                     cp.write(f)
             messagebox.showinfo("成功", "配置已保存！")
@@ -334,6 +349,17 @@ class SettingsMixin:
                     def_val = DEFAULT_CONFIG[k]
                     if isinstance(def_val, bool):
                         data[k] = str(v).lower() in ('true', '1', 'yes', 'on')
+                    elif def_val is None:
+                        # window_x/y、panel_x/y 可为 None 或整数坐标
+                        if v is None:
+                            data[k] = None
+                        elif isinstance(v, str) and v.strip().lower() in ('', 'none', 'null'):
+                            data[k] = None
+                        else:
+                            try:
+                                data[k] = int(v)
+                            except (ValueError, TypeError):
+                                data[k] = None
                     elif isinstance(def_val, (int, float)):
                         try:
                             data[k] = type(def_val)(v)
@@ -360,11 +386,19 @@ class SettingsMixin:
         gf1.pack(fill="x", pady=6)
 
         v_show_titlebar = tk.BooleanVar(value=cfg.get('show_titlebar', False))
-        v_show_statusbar = tk.BooleanVar(value=cfg.get('show_statusbar', False))
+        v_show_statusbar = tk.BooleanVar(value=cfg.get('show_statusbar', True))
         v_show_sb = tk.BooleanVar(value=cfg['show_scrollbar'])
 
-        ttk.Checkbutton(gf1, text="显示标题栏（待开发）", variable=v_show_titlebar, state="disabled").pack(anchor="w", pady=2)
-        ttk.Checkbutton(gf1, text="显示状态栏（待开发）", variable=v_show_statusbar, state="disabled").pack(anchor="w", pady=2)
+        def update_titlebar():
+            cfg['show_titlebar'] = v_show_titlebar.get()
+            self._refresh_preview()
+
+        def update_statusbar():
+            cfg['show_statusbar'] = v_show_statusbar.get()
+            self._refresh_preview()
+
+        ttk.Checkbutton(gf1, text="显示标题栏", variable=v_show_titlebar, command=update_titlebar).pack(anchor="w", pady=2)
+        ttk.Checkbutton(gf1, text="显示状态栏", variable=v_show_statusbar, command=update_statusbar).pack(anchor="w", pady=2)
 
         def update_scrollbar():
             cfg['show_scrollbar'] = v_show_sb.get()
@@ -504,25 +538,11 @@ class SettingsMixin:
         gf4 = ttk.LabelFrame(f, text="控制手柄", padding=8)
         gf4.pack(fill="x", pady=6)
 
-        v_handle_size = tk.IntVar(value=cfg['handle_size'])
         v_handle_opacity = tk.DoubleVar(value=cfg.get('handle_opacity', 0.8))
 
         def update_handle():
-            cfg['handle_size'] = clamp(v_handle_size.get(), MIN_HANDLE_SIZE, MAX_HANDLE_SIZE)
             cfg['handle_opacity'] = round(clamp(v_handle_opacity.get(), 0.1, 1.0), 2)
             self._refresh_preview()
-
-        row_handle = tk.Frame(gf4)
-        row_handle.pack(fill="x", pady=3)
-        ttk.Label(row_handle, text="手柄尺寸：", width=10, anchor="e").pack(side="left", padx=(0, 6))
-        ttk.Spinbox(row_handle, from_=MIN_HANDLE_SIZE, to=MAX_HANDLE_SIZE, textvariable=v_handle_size,
-                    width=4, command=update_handle).pack(side="left", padx=(0, 8))
-        scale_handle = tk.Scale(row_handle, from_=MIN_HANDLE_SIZE, to=MAX_HANDLE_SIZE, variable=v_handle_size, orient="horizontal",
-                                command=lambda v: update_handle(),
-                                troughcolor="#444444", sliderlength=14, width=8,
-                                resolution=1, showvalue=False, bigincrement=2)
-        scale_handle.pack(side="left", fill="x", expand=True)
-        self._make_scale_clickable(scale_handle, v_handle_size, MIN_HANDLE_SIZE, MAX_HANDLE_SIZE, 1, update_handle)
 
         row_ho = tk.Frame(gf4)
         row_ho.pack(fill="x", pady=3)
@@ -538,8 +558,6 @@ class SettingsMixin:
         pct_ho = tk.Label(row_ho, text=f"{int(v_handle_opacity.get()*100)}%", width=5, anchor="w")
         pct_ho.pack(side="left")
         v_handle_opacity.trace_add("write", lambda *a: pct_ho.config(text=f"{int(v_handle_opacity.get()*100)}%"))
-
-        ttk.Label(gf4, text="手柄样式（待开发）", foreground="#999999").pack(anchor="w", pady=(8, 2))
 
     def _build_tab_panel(self, nb):
         f = ttk.Frame(nb, padding=12)
@@ -574,31 +592,61 @@ class SettingsMixin:
         pct.pack(side="left")
         v_panel_opacity.trace_add("write", lambda *a: pct.config(text=f"{int(v_panel_opacity.get()*100)}%"))
 
+        # v2.9.8.3: 相对位置锁定开关
+        gf_lock = ttk.LabelFrame(f, text="位置设置", padding=8)
+        gf_lock.pack(fill="x", pady=6)
+
+        v_panel_locked = tk.BooleanVar(value=cfg.get('panel_locked', True))
+
+        def update_panel_locked():
+            cfg['panel_locked'] = v_panel_locked.get()
+            self._refresh_preview()
+
+        ttk.Checkbutton(gf_lock, text="相对位置锁定（开启后拖动手柄或仪表盘黄色手柄时，仪表盘与主窗口一起移动）",
+                        variable=v_panel_locked, command=update_panel_locked).pack(anchor="w", pady=2)
+
         gf2 = ttk.LabelFrame(f, text="按钮说明", padding=8)
         gf2.pack(fill="both", expand=True, pady=6)
 
         btn_info = [
-            ("O",  "打开文件",   "Ctrl+O",       "#333333"),
-            ("S",  "保存文件",   "Ctrl+S",       "#333333"),
-            ("隐", "隐写模式",   "中键切换",     "#333333"),
-            ("SN", "另存为",     "Ctrl+Shift+S", "#333333"),
-            ("反", "反色显示",   "Ctrl+F",       "#3d3d3d"),
-            ("易", "易读模式",   "Ctrl+Shift+R", "#3d3d3d"),
-            ("顶", "置顶模式",   "Ctrl+T",       "#3d3d3d"),
-            ("色", "主题切换",   "Ctrl+M",       "#3d3d3d"),
-            ("控", "设置仪表盘", "Ctrl+K",       "#3d3d3d"),
-            ("X",  "退出程序",   "—",            "#2a2a2a"),
-            ("⋮⋮", "拖动仪表盘", "",             "#ff8800"),
+            ("N",   "新建文件",   "Ctrl+N",       "#333333", "按钮"),
+            ("O",   "打开文件",   "Ctrl+O",       "#333333", "按钮"),
+            ("S",   "保存文件",   "Ctrl+S",       "#333333", "按钮"),
+            ("SN",  "另存为",     "Ctrl+Shift+S", "#333333", "按钮"),
+            ("隐",  "隐写模式",   "中键切换",     "#3d3d3d", "按钮+红点"),
+            ("适",  "适配背景",   "双击手柄取色", "#3d3d3d", "图案+红点"),
+            ("反",  "反色显示",   "Ctrl+F",       "#3d3d3d", "按钮+红点"),
+            ("易",  "易读模式",   "Ctrl+Shift+R", "#3d3d3d", "按钮+红点"),
+            ("顶",  "置顶模式",   "Ctrl+T",       "#3d3d3d", "按钮+红点"),
+            ("色",  "主题切换",   "Ctrl+M",       "#3d3d3d", "图案+红点"),
+            ("控",  "设置面板",   "Ctrl+K",       "#3d3d3d", "按钮"),
+            ("X",   "退出程序",   "—",            "#2a2a2a", "按钮"),
+            ("⋮⋮",  "拖动仪表盘", "按住拖动",     "#ff8800", "拖拽手柄"),
         ]
 
-        for symbol, name, shortcut, bg_color in btn_info:
+        for symbol, name, shortcut, bg_color, style in btn_info:
             row = tk.Frame(gf2)
             row.pack(fill="x", pady=2)
-            preview = tk.Label(row, text=symbol, bg=bg_color, fg="#ffffff", width=4,
-                               font=("Microsoft YaHei UI", 9, "bold"), relief="flat")
-            preview.pack(side="left", padx=(0, 8))
+            # v2.9.8.3: 色/适 按钮使用 Canvas 绘制图标，与仪表盘实际显示保持一致
+            if symbol == "色":
+                preview = tk.Canvas(row, bg=bg_color, highlightthickness=0, bd=0,
+                                    width=PANEL_BTN_SIZE, height=PANEL_BTN_SIZE)
+                preview.pack(side="left", padx=(0, 8))
+                preview.update_idletasks()
+                self._draw_theme_icon(preview, bg_color)
+            elif symbol == "适":
+                preview = tk.Canvas(row, bg=bg_color, highlightthickness=0, bd=0,
+                                    width=PANEL_BTN_SIZE, height=PANEL_BTN_SIZE)
+                preview.pack(side="left", padx=(0, 8))
+                preview.update_idletasks()
+                self._draw_adapt_icon(preview, bg_color)
+            else:
+                preview = tk.Label(row, text=symbol, bg=bg_color, fg="#ffffff", width=4,
+                                   font=("Microsoft YaHei UI", 9, "bold"), relief="flat")
+                preview.pack(side="left", padx=(0, 8))
             ttk.Label(row, text=name, width=12, anchor="w").pack(side="left", padx=(0, 8))
-            ttk.Label(row, text=shortcut, foreground="#888888").pack(side="left")
+            ttk.Label(row, text=shortcut, width=14, anchor="w", foreground="#888888").pack(side="left", padx=(0, 8))
+            ttk.Label(row, text=style, width=10, anchor="w", foreground="#666666").pack(side="left")
 
     def _build_tab_about(self, nb):
         f = ttk.Frame(nb, padding=12)
@@ -624,16 +672,26 @@ class SettingsMixin:
 
     def _apply_settings(self):
         self.cfg = copy.deepcopy(self._preview_cfg)
+        # 第1步：窗口样式（含 taskbar sync），同步执行确保样式立即生效
         self._apply_window_style()
+        # 第2步：延迟执行其余重操作，让事件循环处理积压事件，避免长时间无响应
+        self.root.after(0, self._apply_settings_rest)
+
+    def _apply_settings_rest(self):
+        """_apply_settings 的第2步：文本外观/隐写/四角/手柄/面板"""
         self._apply_text_appearance()
         self._apply_stealth_state()
         self._corner_dirty = True
         self._update_corners()
         self._update_handle()
         self._update_panel_button_states()
-        self._set_taskbar_visible(self.cfg['show_taskbar'])
+        if hasattr(self, '_refresh_titlebar'):
+            self._refresh_titlebar()
+        if hasattr(self, '_refresh_statusbar'):
+            self._refresh_statusbar()
         self._save_config_debounced()
 
     def _ok_settings(self):
-        self._apply_settings()
+        # 先销毁设置窗口，再延迟应用配置，避免 destroy 与重绘冲突导致假死
         self._settings_win.destroy()
+        self.root.after(50, self._apply_settings)

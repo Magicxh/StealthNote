@@ -7,7 +7,7 @@ import ctypes
 from ctypes import wintypes
 
 APP_NAME = "Stealth Note"
-VERSION = "v2.9.7.2"
+VERSION = "v2.9.8.4"
 AUTHOR = "Magicxh & TRAE"
 CONTACT_EMAIL = "17296509@qq.com"
 
@@ -123,11 +123,30 @@ HANDLE_REF_R = 9
 PANEL_BTN_SIZE = 36
 PANEL_PADDING = 4
 PANEL_BTN_GAP = 2
-PANEL_WIDTH = PANEL_PADDING * 2 + PANEL_BTN_SIZE * 11 + PANEL_BTN_GAP * 10
+PANEL_WIDTH = PANEL_PADDING * 2 + PANEL_BTN_SIZE * 13 + PANEL_BTN_GAP * 12
 PANEL_HEIGHT = PANEL_PADDING * 2 + PANEL_BTN_SIZE
+
+# === 标题栏常量 ===
+TITLEBAR_HEIGHT = 22          # 胶囊高度
+TITLEBAR_FONT_SIZE = 9        # 固定字号
+TITLEBAR_MAX_CHARS = 20       # 最大显示汉字数
+TITLEBAR_GAP = 10             # 标题栏与文本框的垂直间距
+TITLEBAR_FONT = "Microsoft YaHei UI"
+TITLEBAR_CAPSULE_R = TITLEBAR_HEIGHT // 2  # 胶囊两端圆弧半径
+
+# === 状态栏常量 ===
+STATUSBAR_HEIGHT = 22          # 与标题栏同高
+STATUSBAR_FONT_SIZE = 9        # 与标题栏同字号
+STATUSBAR_GAP = 4              # 状态栏与标题栏的间距
+STATUSBAR_FONT = "Microsoft YaHei UI"
+STATUSBAR_CAPSULE_R = STATUSBAR_HEIGHT // 2
+STATUSBAR_DEFAULT_WIDTH = 80   # 默认宽度（显示"字数：NNN"）
 
 # === 配置防抖 ===
 CONFIG_SAVE_DEBOUNCE_MS = 500
+
+# === 暂存间隔 ===
+AUTOSAVE_INTERVAL_MS = 60000  # 自动暂存间隔（60秒）
 
 # === 路径计算 ===
 if getattr(sys, 'frozen', False):
@@ -136,3 +155,6 @@ else:
     _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(_CONFIG_DIR, "stealth_note_config.json")
 ICON_FILE = os.path.join(_CONFIG_DIR, "stealth_note.ico")
+
+# === 暂存文件路径（必须在 _CONFIG_DIR 定义之后）===
+AUTOSAVE_FILE = os.path.join(_CONFIG_DIR, "Autosave.txt")

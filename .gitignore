@@ -14,6 +14,9 @@ stealth_note_config.json
 # 历史版本备份
 历史版本/
 
+# 归档目录（含exe等二进制，不提交到git）
+Archive/
+
 # 参考文档
 参考文档/
 

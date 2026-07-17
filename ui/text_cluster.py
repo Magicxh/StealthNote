@@ -164,6 +164,12 @@ class TextClusterMixin:
         self.stealth_text.bind("<MouseWheel>", self._on_stealth_wheel)
         self.stealth_container.bind("<MouseWheel>", lambda e: self._route_wheel_to_text(e, self.stealth_text))
 
+        # 右键菜单改为释放时弹出（支持右键+滚轮调透明度）
+        self.text.bind("<Button-3>", self._on_text_right_press)
+        self.text.bind("<ButtonRelease-3>", self._on_text_right_release)
+        self.stealth_text.bind("<Button-3>", self._on_text_right_press)
+        self.stealth_text.bind("<ButtonRelease-3>", self._on_text_right_release)
+
         # 创建隐写行数 IntVar（供菜单 radiobutton 使用）
         self._stealth_lines_var = tk.IntVar(value=self.cfg.get('stealth_lines', 3))
 
@@ -309,9 +315,11 @@ class TextClusterMixin:
         if self.cfg.get('stealth_mode') and hasattr(self, 'stealth_container') and self._is_stealth_container_visible():
             ww = self.content_win.winfo_width()
             new_h = self._calc_stealth_window_height()
-            if abs(new_h - self.root.winfo_height()) > 2:
+            root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
+            if abs(new_h - (self.root.winfo_height() - root_y_offset)) > 2:
                 offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
-                self.root.geometry(f"{ww + offset}x{new_h}")
+                self.root.geometry(f"{ww + offset}x{new_h + root_y_offset}")
+                self.root.update_idletasks()
                 self.content_win.geometry(f"{ww}x{new_h}")
                 self._corner_dirty = True
                 self._update_corners()
@@ -326,21 +334,26 @@ class TextClusterMixin:
         except Exception:
             pass
 
+        # v2.9.8: 同步标题栏外观（反色/颜色/透明度变化时确保标题栏同步）
+        if hasattr(self, '_update_titlebar_appearance'):
+            self._update_titlebar_appearance()
+        # v2.9.8: 同步状态栏外观（反色/颜色/透明度变化时确保状态栏同步）
+        if hasattr(self, '_update_statusbar_appearance'):
+            self._update_statusbar_appearance()
+
     def _apply_read_mode_bg(self):
         """易读模式 — 仅在有文字的行显示背景色。
 
-        content_win 的 LWA_ALPHA 设为 0（完全透明），易读背景通过 Text tag 实现。
+        v2.9.8: content_win 使用 LWA_ALPHA | LWA_COLORKEY，alpha = read_bg_opacity * 255。
+        read_bg tag 使用纯 read_bg_color（不再混合 raw_bg），透明度由 LWA_ALPHA 统一控制。
+        COLORKEY 区域（空行）全透明，有文字行半透明。
         """
+        self._read_bg_after_id = None
         try:
             row_bg = self.cfg['read_bg_color']
             if self.cfg['invert_mode']:
                 row_bg = invert_color(row_bg)
-            read_op = self.cfg['read_bg_opacity']
-            raw_bg = self.cfg['bg_color']
-            if self.cfg['invert_mode']:
-                raw_bg = invert_color(raw_bg)
-            row_bg = mix_color(row_bg, read_op, raw_bg)
-
+            # 直接使用 read_bg_color 纯色，透明度由 content_win 的 LWA_ALPHA 控制
             for widget in [self.text, getattr(self, 'stealth_text', None)]:
                 if not widget or not widget.winfo_exists():
                     continue
@@ -475,8 +488,9 @@ class TextClusterMixin:
                 value=lines,
                 variable=self._stealth_lines_var,
                 command=lambda n=lines: self._set_stealth_lines(n))
-        self.text.bind("<Button-3>", self._show_context_menu)
-        self.stealth_text.bind("<Button-3>", self._show_context_menu)
+        # 右键菜单绑定已移至 _init_content（改为释放时弹出）
+        # self.text.bind("<Button-3>", self._show_context_menu)
+        # self.stealth_text.bind("<Button-3>", self._show_context_menu)
 
     def _show_context_menu(self, event):
         try:
@@ -493,10 +507,27 @@ class TextClusterMixin:
     def _on_text_modified(self, event):
         if self.text.edit_modified():
             self._modified = True
+            # 暂存模式触发检测：新文件（current_file is None）+ 有实际内容 → 进入暂存模式
+            if not self.current_file and not self._autosave_mode:
+                content = self.text.get("1.0", "end-1c").strip()
+                if content:
+                    self._enter_autosave_mode()
+            elif self._autosave_mode:
+                # 暂存模式下有新改动，标记为未保存
+                self._autosave_dirty = True
             self._update_title()
+            # v2.9.8: 同步状态栏字数显示
+            if hasattr(self, '_update_statusbar_text'):
+                self._update_statusbar_text()
             self.text.edit_modified(False)
             if self.cfg['read_mode']:
-                self.root.after(50, self._apply_read_mode_bg)
+                # 防抖：取消旧的 after 回调，避免快速输入时回调堆积
+                if getattr(self, '_read_bg_after_id', None):
+                    try:
+                        self.root.after_cancel(self._read_bg_after_id)
+                    except Exception:
+                        pass
+                self._read_bg_after_id = self.root.after(50, self._apply_read_mode_bg)
             if self.cfg.get('stealth_mode'):
                 self.root.after(10, self._sync_to_stealth)
 
@@ -504,6 +535,9 @@ class TextClusterMixin:
         if self.stealth_text.edit_modified():
             self._modified = True
             self._update_title()
+            # v2.9.8: 同步状态栏字数显示
+            if hasattr(self, '_update_statusbar_text'):
+                self._update_statusbar_text()
             self.stealth_text.edit_modified(False)
             self.root.after(10, self._sync_from_stealth)
 
@@ -529,6 +563,9 @@ class TextClusterMixin:
         # 同步任务栏标题
         if hasattr(self, '_taskbar_host') and self._taskbar_host:
             self._taskbar_host.set_title(title)
+        # 同步标题栏文字
+        if hasattr(self, '_refresh_titlebar'):
+            self._refresh_titlebar()
 
     def _focus_text(self):
         try:
@@ -540,13 +577,17 @@ class TextClusterMixin:
             pass
 
     def _on_text_wheel_smooth(self, event):
-        """文本框滚轮：左键按下时调整背景透明度，否则顺滑滚动文本"""
-        # 左键按下时滚轮调整背景透明度
+        """文本框滚轮：右键按下时调整背景透明度，左键按下时屏蔽，否则顺滑滚动文本"""
+        # 左键按下时屏蔽滚轮
         if self._is_left_button_held():
+            return "break"
+        # 右键按下时滚轮调整背景透明度
+        if self._is_right_button_held():
+            self._right_button_wheel_used = True
             delta = 1 if event.delta > 0 else -1
             new_op = max(0.0, min(1.0, self.cfg['bg_opacity'] + delta * 0.08))
             self.cfg['bg_opacity'] = round(new_op, 2)
-            self._apply_window_style()
+            self._apply_window_style_debounced()
             self._save_config_debounced()
             return "break"
 
@@ -557,6 +598,15 @@ class TextClusterMixin:
         lines = -1 if event.delta > 0 else 1
         widget.yview_scroll(lines, "units")
         return "break"
+
+    def _on_text_right_press(self, event):
+        """右键按下：记录状态，不立即弹菜单"""
+        self._right_button_wheel_used = False
+
+    def _on_text_right_release(self, event):
+        """右键释放：如果期间没有滚轮操作，弹出上下文菜单"""
+        if not getattr(self, '_right_button_wheel_used', False):
+            self._show_context_menu(event)
 
     def _route_wheel_to_text(self, event, text_widget):
         """在容器/空白区域滚动时，将事件转发给对应文本框"""

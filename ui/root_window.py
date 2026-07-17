@@ -52,11 +52,9 @@ class RootWindowMixin:
     def _force_foreground(self):
         """强制将所有窗口带到最前台。
 
-        v2.9.7: 所有窗口（root/content_win/panel）都归属到 host_win。
-        激活 host_win 会自动激活所有所属窗口，确保它们一起到前台。
+        v2.9.7.3: 简化 topmost 处理，只在需要时切换一次，避免连续触发 <Configure>。
         """
         try:
-            # 先激活 host_win（所有者），Windows 会自动把所有所属窗口带到前台
             if hasattr(self, '_host_hwnd') and self._host_hwnd:
                 real_host = self._get_real_hwnd(self._host_hwnd)
                 user32.SetForegroundWindow(real_host)
@@ -65,22 +63,26 @@ class RootWindowMixin:
             user32.BringWindowToTop(real_root)
         except Exception:
             pass
-        self.root.attributes("-topmost", True)
-        self.content_win.attributes("-topmost", True)
-        if hasattr(self, 'panel') and self.panel and self.panel.winfo_exists():
-            self.panel.attributes("-topmost", True)
+        # 只在非 topmost 模式下临时置顶，避免不必要的 topmost 切换触发 Configure
+        if not self.cfg.get('topmost', False):
+            self.root.attributes("-topmost", True)
+            self.content_win.attributes("-topmost", True)
+            if hasattr(self, 'panel') and self.panel and self.panel.winfo_exists():
+                self.panel.attributes("-topmost", True)
         self.root.lift()
         self.content_win.lift()
         if hasattr(self, 'handle_canvas') and self.handle_canvas:
             self.handle_canvas.tk.call('raise', self.handle_canvas._w)
         if self.cfg.get('show_panel') and hasattr(self, 'panel') and self.panel:
             self.panel.lift()
-        self.root.after(80, lambda: (
-            self.root.attributes("-topmost", self.cfg['topmost']),
-            self.content_win.attributes("-topmost", self.cfg['topmost']),
-            self.panel.attributes("-topmost", self.cfg['topmost'])
-            if hasattr(self, 'panel') and self.panel and self.panel.winfo_exists() else None
-        ))
+        # 只在非 topmost 模式下需要恢复
+        if not self.cfg.get('topmost', False):
+            self.root.after(100, lambda: (
+                self.root.attributes("-topmost", False),
+                self.content_win.attributes("-topmost", False),
+                self.panel.attributes("-topmost", False)
+                if hasattr(self, 'panel') and self.panel and self.panel.winfo_exists() else None
+            ))
 
     # -------------------------------------------------------------------------
     # 主窗口
@@ -119,11 +121,13 @@ class RootWindowMixin:
         hs = max(MIN_HANDLE_SIZE, int(self.cfg['handle_size']))
         handle_cs = hs + HANDLE_WIN_PADDING * 2
         handle_offset = handle_cs // 2 + HANDLE_REF_R + 20
+        # root 向上扩展以完整容纳手柄 Canvas（防止 Canvas 上方被裁剪）
+        handle_root_y_offset = max(0, handle_cs // 2 - HANDLE_REF_R)
 
         root_x = x - handle_offset
-        root_y = y
+        root_y = y - handle_root_y_offset
         root_w = w + handle_offset
-        root_h = h
+        root_h = h + handle_root_y_offset
 
         self.root.geometry(f"{root_w}x{root_h}+{root_x}+{root_y}")
 
@@ -163,8 +167,10 @@ class RootWindowMixin:
         - 易读模式下 content_win alpha=0（完全透明），由 Text tag 显示行背景
         - Text bg=raw_bg 实色，原生交互顺滑，抗锯齿相对于 raw_bg 无毛边
 
-        v2.9.7: 任务栏相关样式(WS_EX_TOOLWINDOW/GWLP_HWNDPARENT)必须对真正的
-        TkTopLevel 窗口设置（通过 _get_real_hwnd），而非 winfo_id() 返回的 TkChild。
+        v2.9.7.4: 移除 SetWindowPos(SWP_FRAMECHANGED) 调用。
+        SetLayeredWindowAttributes 无需 SetWindowPos 即可立即生效；
+        WS_EX_LAYERED/WS_EX_TOOLWINDOW 已在初始化时设置，重复设置无需 SWP_FRAMECHANGED。
+        SWP_FRAMECHANGED 会触发 Win32 级别重绘，覆盖仪表盘小红点 Canvas 的 lift() 操作。
         """
         try:
             bg_op = max(0.05, self.cfg['bg_opacity'])
@@ -176,7 +182,7 @@ class RootWindowMixin:
 
             # ===== root 窗口：LWA_COLORKEY only =====
             self.root.attributes("-transparentcolor", COLORKEY)
-            # v2.9.7: 任务栏样式对真正的 TkTopLevel 设置
+            # v2.9.7: 任务栏样式对真正的 TkTopLevel 设置（幂等操作，无需 SWP_FRAMECHANGED）
             real_root = self._get_real_hwnd(self._root_hwnd)
             ex_style = user32.GetWindowLongW(real_root, GWL_EXSTYLE)
             ex_style |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
@@ -184,39 +190,49 @@ class RootWindowMixin:
             user32.SetWindowLongW(real_root, GWL_EXSTYLE, ex_style)
             # 透明度属性对 TkChild 设置（内容窗口）
             user32.SetLayeredWindowAttributes(self._root_hwnd, COLORKEY_INT, 255, LWA_COLORKEY)
-            user32.SetWindowPos(self._root_hwnd, 0, 0, 0, 0, 0,
-                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
             # ===== content_win 内容窗口：LWA_ALPHA | LWA_COLORKEY =====
             if not hasattr(self, '_content_hwnd') or not self._content_hwnd:
                 self._content_hwnd = self.content_win.winfo_id()
-            # v2.9.7: 任务栏样式对真正的 TkTopLevel 设置
+            # v2.9.7: 任务栏样式对真正的 TkTopLevel 设置（幂等操作）
             real_content = self._get_real_hwnd(self._content_hwnd)
             ex2 = user32.GetWindowLongW(real_content, GWL_EXSTYLE)
             ex2 |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
             ex2 &= ~WS_EX_APPWINDOW
             user32.SetWindowLongW(real_content, GWL_EXSTYLE, ex2)
-            # 易读模式下背景完全透明，仅用 LWA_COLORKEY（不用 LWA_ALPHA）
-            # LWA_ALPHA with alpha=0 会让整个窗口（含文字）完全透明
+            # 易读模式：LWA_ALPHA | LWA_COLORKEY，alpha = read_bg_opacity * 255
+            # COLORKEY 区域（空行）全透明，有文字行通过 read_bg tag 显示半透明背景
             if self.cfg['read_mode']:
+                read_alpha = int(max(0.0, self.cfg['read_bg_opacity']) * 255)
                 user32.SetLayeredWindowAttributes(
-                    self._content_hwnd, COLORKEY_INT, 255,
-                    LWA_COLORKEY)
+                    self._content_hwnd, COLORKEY_INT, read_alpha,
+                    LWA_ALPHA | LWA_COLORKEY)
             else:
                 # LWA_ALPHA | LWA_COLORKEY：alpha 控制整体半透明，COLORKEY(#010101) 穿透
                 user32.SetLayeredWindowAttributes(
                     self._content_hwnd, COLORKEY_INT, int(max(0.0, bg_op) * 255),
                     LWA_ALPHA | LWA_COLORKEY)
-            user32.SetWindowPos(self._content_hwnd, 0, 0, 0, 0, 0,
-                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
-            # ===== topmost 设置 =====
-            if self.cfg['topmost']:
-                self.root.attributes("-topmost", True)
-                self.content_win.attributes("-topmost", True)
-            else:
-                self.root.attributes("-topmost", False)
-                self.content_win.attributes("-topmost", False)
+            # ===== topmost 设置（仅在配置变化时切换，避免冗余 z-order 重排）=====
+            new_topmost = bool(self.cfg['topmost'])
+            if bool(self.root.attributes('-topmost')) != new_topmost:
+                self.root.attributes("-topmost", new_topmost)
+                self.content_win.attributes("-topmost", new_topmost)
+                if hasattr(self, 'panel') and self.panel and self.panel.winfo_exists():
+                    self.panel.attributes("-topmost", new_topmost)
+                # 标题栏同步 topmost
+                if hasattr(self, 'titlebar_win') and self.titlebar_win and self.titlebar_win.winfo_exists():
+                    self.titlebar_win.attributes("-topmost", new_topmost)
+                # 状态栏同步 topmost
+                if hasattr(self, 'statusbar_win') and self.statusbar_win and self.statusbar_win.winfo_exists():
+                    self.statusbar_win.attributes("-topmost", new_topmost)
+
+            # 标题栏外观同步（透明度/颜色）
+            if hasattr(self, '_update_titlebar_appearance'):
+                self._update_titlebar_appearance()
+            # 状态栏外观同步（透明度/颜色）
+            if hasattr(self, '_update_statusbar_appearance'):
+                self._update_statusbar_appearance()
 
             if hasattr(self, '_taskbar_host') and self._taskbar_host:
                 self._taskbar_host.sync()
@@ -244,19 +260,30 @@ class RootWindowMixin:
 
         v2.9.7: content_win 位于 root 右侧（文本区），
         偏移量为手柄区域宽度（_get_handle_offset）。
+        root 向上扩展了 root_y_offset，content_win 的 y 需要加上该偏移。
+
+        v2.9.7.13: 隐写模式下高度由行数决定，不受 MIN_WINDOW_H 限制。
         """
         try:
             if hasattr(self, 'content_win') and self.content_win and self.content_win.winfo_exists():
                 offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+                root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
                 x = self.root.winfo_x() + offset
-                y = self.root.winfo_y()
+                y = self.root.winfo_y() + root_y_offset
                 w = self.root.winfo_width() - offset
-                h = self.root.winfo_height()
+                h = self.root.winfo_height() - root_y_offset
                 if w < MIN_WINDOW_W:
                     w = MIN_WINDOW_W
-                if h < MIN_WINDOW_H:
+                # 隐写模式下高度由行数决定，不受 MIN_WINDOW_H 限制
+                if not self.cfg.get('stealth_mode') and h < MIN_WINDOW_H:
                     h = MIN_WINDOW_H
                 self.content_win.geometry(f"{w}x{h}+{x}+{y}")
+                # 同步标题栏位置（跟随 content_win 移动）
+                if hasattr(self, '_layout_titlebar'):
+                    self._layout_titlebar()
+                # 同步状态栏位置（跟随标题栏移动）
+                if hasattr(self, '_layout_statusbar'):
+                    self._layout_statusbar()
         except Exception as e:
             print(f"[同步内容窗口] 失败: {e}")
 
@@ -271,11 +298,12 @@ class RootWindowMixin:
             self._refresh_stealth_view()
         if self._window_visible:
             offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+            root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
             self.cfg['window_width'] = self.root.winfo_width() - offset
             self.cfg['window_x'] = self.root.winfo_x() + offset
-            self.cfg['window_y'] = self.root.winfo_y()
+            self.cfg['window_y'] = self.root.winfo_y() + root_y_offset
             if not self.cfg.get('stealth_mode'):
-                self.cfg['window_height'] = self.root.winfo_height()
+                self.cfg['window_height'] = self.root.winfo_height() - root_y_offset
             self._save_config_debounced()
 
     def _on_focus_change(self):

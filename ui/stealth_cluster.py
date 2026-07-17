@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import font as tkfont
 from constants import *
-from utils import mix_color, clamp
+from utils import clamp
 
 
 class StealthClusterMixin:
@@ -52,20 +52,21 @@ class StealthClusterMixin:
     def _calc_stealth_window_height(self):
         """精确计算隐写模式下窗口的总高度。
 
-        使用 stealth_text 的实际渲染字体计算 linespace，避免新建 Font 对象
-        与实际渲染字体不一致导致行高偏差和半行显示。
+        直接使用 cfg 中的字体配置创建 Font 对象计算 linespace，
+        避免 cget("font") 返回字符串格式不一致导致行高偏差。
         """
         lines = self.cfg.get('stealth_lines', 3)
         try:
-            # 使用 stealth_text 的实际字体，而非新建 Font 对象
-            font_str = self.stealth_text.cget("font")
-            f = tkfont.Font(font=font_str)
+            f = tkfont.Font(
+                family=self.cfg['text_font'],
+                size=self.cfg['text_size']
+            )
             line_height = f.metrics("linespace")
         except Exception:
             line_height = int(self.cfg['text_size'] * 1.6)
 
         text_height = line_height * lines
-        # 容器上下边距（隐写模式已缩小到 20%）+ 横线总高 2px
+        # 容器上下边距 + 横线总高 2px
         return text_height + STEALTH_PAD_Y * 2 + 2
 
     def _set_stealth_lines(self, lines):
@@ -76,74 +77,57 @@ class StealthClusterMixin:
         self.stealth_text.configure(height=self.cfg['stealth_lines'])
         if self.cfg.get('stealth_mode'):
             self.stealth_text.update_idletasks()
-            self._refresh_stealth_view()
             new_h = self._calc_stealth_window_height()
-            wx = self.root.winfo_x()
-            wy = self.root.winfo_y()
             offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
-            self.root.geometry(f"{self.content_win.winfo_width() + offset}x{new_h}")
+            root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
+            self.root.geometry(f"{self.content_win.winfo_width() + offset}x{new_h + root_y_offset}")
+            self.root.update_idletasks()
             self.content_win.geometry(f"{self.content_win.winfo_width()}x{new_h}")
             self.content_win.update_idletasks()
             self._corner_dirty = True
             self._update_corners()
             self._layout_handle()
+            # geometry 变更后再刷新隐写视图，确保 dlineinfo 返回正确位置
+            self._refresh_stealth_view()
         self._save_config_debounced()
 
     def _refresh_stealth_view(self):
-        """根据光标所在视觉行刷新隐写文本框的显示范围与分隔线。
+        """根据光标所在行刷新隐写文本框的显示范围与分隔线。
 
-        B19 修复：使用 dlineinfo("insert") 获取光标所在视觉行的像素位置，
-        直接像素级滚动对齐，解决 word wrap 时光标行不同步上移的问题。
+        使用旧版可靠方案：计算应显示在顶部的行号(top)，
+        用 see(top) + dlineinfo(top) 将 top 行精确对齐到控件顶部。
 
-        核心逻辑：
-        1. 先 see("insert") 确保光标行可见
-        2. 用 dlineinfo("insert") 获取光标行的视觉 Y 位置和行高
-        3. 根据模式计算目标 Y 位置（光标行应在的 Y 位置）
-           - 一行模式：光标行在顶部 (target_y = 0)
-           - 两行模式：光标行在底部 (target_y = line_height)
-           - 三行模式：光标行在中间 (target_y = line_height * 2)
-        4. 用 yview_scroll 像素级滚动，将光标行精确对齐到目标位置
+        三行模式：top = cursor-1（光标行在中间）
+        两行模式：top = cursor-1（光标行在底部）
+        一行模式：top = cursor（仅显示光标行）
         """
         if not self.cfg.get('stealth_mode') or not self.stealth_text.winfo_exists():
             return
         try:
             widget = self.stealth_text if self.root.focus_get() == self.stealth_text else self.text
             cur = widget.index("insert")
+            line = int(cur.split(".")[0])
 
             mode = self.cfg['stealth_lines']
+            if mode == 1:
+                top = line
+            elif mode == 2:
+                top = max(1, line - 1)
+            else:  # 3 lines
+                top = max(1, line - 1)
 
-            # Step 1: 确保光标行可见
-            self.stealth_text.see("insert")
+            # Step 1: 将目标 top 行带入可见区域
+            self.stealth_text.see(f"{top}.0")
             self.stealth_text.update_idletasks()
 
-            # Step 2: 获取光标所在视觉行的像素位置
-            bbox = self.stealth_text.dlineinfo("insert")
-            if not bbox:
-                self.root.after(20, self._refresh_stealth_view)
-                return
+            # Step 2: 像素级微调，将 top 行精确对齐到控件顶部
+            bbox = self.stealth_text.dlineinfo(f"{top}.0")
+            if bbox:
+                y_offset = bbox[1]
+                if y_offset != 0:
+                    self.stealth_text.yview_scroll(y_offset, "pixels")
 
-            _, y, _, h, _ = bbox
-            line_height = h if h > 0 else 1
-
-            # Step 3: 计算目标 Y 位置（光标行应在的 Y 位置）
-            if mode == 1:
-                # 一行模式：光标行在顶部
-                target_y = 0
-            elif mode == 2:
-                # 两行模式：光标行在底部，上一视觉行在顶部
-                target_y = line_height
-            else:
-                # 三行模式：光标行在中间，上两视觉行在顶部
-                target_y = line_height * 2
-
-            # Step 4: 像素级滚动对齐
-            # delta > 0: 光标行在目标位置下方，需要向下滚动（内容上移）
-            # delta < 0: 光标行在目标位置上方，需要向上滚动（内容下移）
-            delta = y - target_y
-            if abs(delta) > 0:
-                self.stealth_text.yview_scroll(delta, "pixels")
-
-            # 保持光标位置
+            # 保持光标位置（不调用 see，避免二次滚动）
             self.stealth_text.mark_set("insert", cur)
 
             self.root.after(10, self._update_stealth_line)
@@ -155,6 +139,7 @@ class StealthClusterMixin:
         if not self.cfg.get('stealth_mode') or not self.stealth_text.winfo_exists():
             self._stealth_line_container.place_forget()
             self._stealth_line_visible = False
+            self._stealth_line_retries = 0
             return
         try:
             self.stealth_text.update_idletasks()
@@ -162,8 +147,12 @@ class StealthClusterMixin:
 
             bbox = self.stealth_text.dlineinfo("insert")
             if not bbox:
-                self.root.after(20, self._update_stealth_line)
+                # 限制重试次数，避免无限自重试堆积after回调
+                self._stealth_line_retries = getattr(self, '_stealth_line_retries', 0) + 1
+                if self._stealth_line_retries <= 5:
+                    self.root.after(20, self._update_stealth_line)
                 return
+            self._stealth_line_retries = 0
             _, y, _, h, _ = bbox
             # 横线在 content_frame 上的 y：容器上边距 + 光标行底部
             line_y = STEALTH_PAD_Y + y + h
@@ -186,12 +175,16 @@ class StealthClusterMixin:
             print(f"[隐写线] 更新失败: {e}")
 
     def _on_stealth_wheel(self, event):
-        """隐写文本框滚轮：累积 delta，每满 120 移动光标一行并刷新视图。"""
+        """隐写文本框滚轮：右键按下时调整背景透明度，左键按下时屏蔽，否则累积 delta 移动光标行。"""
+        # 左键按下时屏蔽滚轮
         if self._is_left_button_held():
+            return "break"
+        if self._is_right_button_held():
+            self._right_button_wheel_used = True
             delta = 1 if event.delta > 0 else -1
             new_op = max(0.0, min(1.0, self.cfg['bg_opacity'] + delta * 0.08))
             self.cfg['bg_opacity'] = round(new_op, 2)
-            self._apply_window_style()
+            self._apply_window_style_debounced()
             self._save_config_debounced()
             return "break"
 
@@ -230,14 +223,13 @@ class StealthClusterMixin:
         if lines is not None:
             self.cfg['stealth_lines'] = clamp(lines, 1, 3)
 
-        wx = self.root.winfo_x()
-        wy = self.root.winfo_y()
         ww = self.content_win.winfo_width()
         offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+        root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
 
         if self.cfg['stealth_mode']:
-            # 保存当前窗口高度（用于恢复）
-            self._normal_window_height = self.root.winfo_height()
+            # 保存当前窗口高度（用于恢复，存的是 content_win 高度，不含 root_y_offset）
+            self._normal_window_height = self.root.winfo_height() - root_y_offset
 
             # 同步内容和光标
             content = self.text.get("1.0", "end-1c")
@@ -253,9 +245,11 @@ class StealthClusterMixin:
             self.stealth_container.pack(fill="both", expand=True, padx=TEXT_PAD_X, pady=STEALTH_PAD_Y)
 
             # 调整窗口高度（左上角锚定，宽度不变）
+            # root 高度需包含 root_y_offset，否则 _sync_content_window 会截短 content_win
             self.stealth_text.update_idletasks()
             new_h = self._calc_stealth_window_height()
-            self.root.geometry(f"{ww + offset}x{new_h}")
+            self.root.geometry(f"{ww + offset}x{new_h + root_y_offset}")
+            self.root.update_idletasks()
             self.content_win.geometry(f"{ww}x{new_h}")
             self.content_win.update_idletasks()
 
@@ -285,7 +279,8 @@ class StealthClusterMixin:
                 new_h = self._normal_window_height
             else:
                 new_h = max(MIN_WINDOW_H, self.cfg.get('window_height', 400))
-            self.root.geometry(f"{ww + offset}x{new_h}")
+            self.root.geometry(f"{ww + offset}x{new_h + root_y_offset}")
+            self.root.update_idletasks()
             self.content_win.geometry(f"{ww}x{new_h}")
 
             self.text.focus_set()
@@ -307,7 +302,6 @@ class StealthClusterMixin:
             self.stealth_text.configure(height=lines)
 
             if visible:
-                # 进入隐写模式
                 if self.text_container.winfo_manager() == "pack":
                     self.text_container.pack_forget()
                 self.sb_container.place_forget()
@@ -327,7 +321,9 @@ class StealthClusterMixin:
                 ww = self.content_win.winfo_width()
                 new_h = self._calc_stealth_window_height()
                 offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
-                self.root.geometry(f"{ww + offset}x{new_h}")
+                root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
+                self.root.geometry(f"{ww + offset}x{new_h + root_y_offset}")
+                self.root.update_idletasks()
                 self.content_win.geometry(f"{ww}x{new_h}")
                 self.content_win.update_idletasks()
                 self._corner_dirty = True
@@ -339,7 +335,6 @@ class StealthClusterMixin:
                     self._layout_handle()
                 ))
             else:
-                # 普通文本框模式
                 if self._is_stealth_container_visible():
                     try:
                         content = self.stealth_text.get("1.0", "end-1c")

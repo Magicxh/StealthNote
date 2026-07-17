@@ -23,6 +23,8 @@ from ui.handle import HandleMixin
 from ui.panel import PanelMixin
 from ui.corners import CornersMixin
 from ui.settings import SettingsMixin
+from ui.titlebar import TitlebarMixin
+from ui.statusbar import StatusbarMixin
 
 # Platform
 from platform.taskbar import TaskbarHost
@@ -37,6 +39,8 @@ class StealthNoteApp(
     PanelMixin,
     CornersMixin,
     SettingsMixin,
+    TitlebarMixin,
+    StatusbarMixin,
 ):
     """Stealth Note 主应用类"""
 
@@ -67,6 +71,11 @@ class StealthNoteApp(
         self._stealth_wheel_acc = 0
         self._preview_after_id = None
 
+        # 暂存模式状态
+        self._autosave_mode = False        # 是否处于暂存模式
+        self._autosave_dirty = False       # 暂存模式下是否有未自动保存的改动
+        self._autosave_timer_id = None     # 自动暂存计时器
+
         self._root_hwnd = None
         self._panel_hwnd = None
 
@@ -87,16 +96,23 @@ class StealthNoteApp(
         self._init_corners()
         self._init_handle()
         self._init_panel()
+        self._init_titlebar()
+        self._init_statusbar()
         self._init_shortcuts()
 
         # 应用初始样式
         self.root.deiconify()
         self._apply_window_style()
         self._apply_text_appearance()
+        self._refresh_titlebar()
+        self._refresh_statusbar()
         self.root.after(100, self._layout_all)
 
         self.root.lift()
         self._window_visible = True
+
+        # 启动时：如果上次以暂存模式关闭，自动读取暂存内容
+        self._check_autosave_on_startup()
 
         if not os.path.exists(CONFIG_FILE):
             self._save_config_debounced()
@@ -142,11 +158,152 @@ class StealthNoteApp(
             print(f"[配置] 保存失败: {e}")
 
     # -------------------------------------------------------------------------
+    # 暂存模式管理
+    # -------------------------------------------------------------------------
+
+    def _is_autosave_mode(self):
+        """是否处于暂存模式"""
+        return self._autosave_mode
+
+    def _check_autosave_on_startup(self):
+        """启动时检查是否需要自动读取暂存内容。
+        如果上次以暂存模式关闭且 Autosave.txt 有内容，自动读取并进入暂存模式。
+        """
+        if not self.cfg.get('last_autosave_closed', False):
+            return
+        if not os.path.exists(AUTOSAVE_FILE):
+            return
+        try:
+            with open(AUTOSAVE_FILE, 'r', encoding='utf-8') as f:
+                content = f.read()
+            if content.strip():
+                self.text.delete("1.0", "end")
+                self.text.insert("1.0", content)
+                self.text.edit_reset()
+                self._modified = False
+                self._enter_autosave_mode()
+                self._update_title()
+                if self.cfg['read_mode']:
+                    self.root.after(50, self._apply_read_mode_bg)
+        except Exception as e:
+            print(f"[暂存] 启动读取失败: {e}")
+
+    def _enter_autosave_mode(self):
+        """进入暂存模式：启动自动保存计时器"""
+        if self._autosave_mode:
+            return
+        self._autosave_mode = True
+        self._autosave_dirty = True
+        self._start_autosave_timer()
+        if hasattr(self, '_refresh_titlebar'):
+            self._refresh_titlebar()
+
+    def _exit_autosave_mode(self):
+        """退出暂存模式：取消计时器，重置状态"""
+        if not self._autosave_mode:
+            return
+        self._autosave_mode = False
+        self._autosave_dirty = False
+        if self._autosave_timer_id is not None:
+            try:
+                self.root.after_cancel(self._autosave_timer_id)
+            except Exception:
+                pass
+            self._autosave_timer_id = None
+        if hasattr(self, '_refresh_titlebar'):
+            self._refresh_titlebar()
+
+    def _start_autosave_timer(self):
+        """启动/重置自动暂存计时器"""
+        if self._autosave_timer_id is not None:
+            try:
+                self.root.after_cancel(self._autosave_timer_id)
+            except Exception:
+                pass
+        self._autosave_timer_id = self.root.after(AUTOSAVE_INTERVAL_MS, self._autosave_timer_tick)
+
+    def _autosave_timer_tick(self):
+        """自动暂存计时器回调"""
+        self._autosave_timer_id = None
+        if self._autosave_mode and self._autosave_dirty:
+            self._autosave_save()
+        if self._autosave_mode:
+            self._start_autosave_timer()
+
+    def _autosave_save(self):
+        """保存暂存内容到 Autosave.txt"""
+        try:
+            content = self.text.get("1.0", "end-1c")
+            with open(AUTOSAVE_FILE, 'w', encoding='utf-8') as f:
+                f.write(content)
+            self._autosave_dirty = False
+            if hasattr(self, '_refresh_titlebar'):
+                self._refresh_titlebar()
+        except Exception as e:
+            print(f"[暂存] 保存失败: {e}")
+
+    def _load_autosave(self):
+        """读取暂存文件到文本框，进入暂存模式"""
+        if not os.path.exists(AUTOSAVE_FILE):
+            messagebox.showinfo("读取暂存", "没有暂存内容。")
+            return
+        try:
+            with open(AUTOSAVE_FILE, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.text.delete("1.0", "end")
+            self.text.insert("1.0", content)
+            self.text.edit_reset()
+            self.current_file = None
+            self.current_encoding = 'utf-8'
+            self._modified = False
+            self._enter_autosave_mode()
+            self._update_title()
+            if self.cfg['read_mode']:
+                self.root.after(50, self._apply_read_mode_bg)
+        except Exception as e:
+            messagebox.showerror("读取暂存失败", str(e))
+
+    def _check_autosave_before_new(self):
+        """新建/打开文件前检查暂存模式，返回 True 表示中断操作。
+
+        暂存模式下提示用户是否另存为新文件：
+        - 是：执行另存为，成功后退出暂存模式
+        - 否：保留 Autosave.txt（已自动保存），退出暂存模式
+        - 取消：中断操作
+        """
+        if not self._autosave_mode:
+            # 非暂存模式，走原有未保存检查
+            return self._check_save_before_close()
+        # 暂存模式：先保存当前暂存
+        self._autosave_save()
+        result = messagebox.askyesnocancel("暂存内容", "当前处于暂存模式，是否将暂存内容另存为新文件？")
+        if result is None:
+            return True  # 取消
+        if result:
+            # 是：执行另存为
+            if not self.file_save_as():
+                return True  # 另存为失败或取消，中断操作
+        # 否或另存为成功：退出暂存模式
+        self._exit_autosave_mode()
+        return False
+
+    # -------------------------------------------------------------------------
     # 文件操作
     # -------------------------------------------------------------------------
 
+    def file_new(self):
+        """新建文件：检查未保存内容后清空文本框"""
+        if self._check_autosave_before_new():
+            return
+        self.text.delete("1.0", "end")
+        self.text.edit_reset()
+        self.current_file = None
+        self.current_encoding = 'utf-8'
+        self._modified = False
+        self._update_title()
+
     def file_open(self):
-        if self._check_save_before_close():
+        if self._check_autosave_before_new():
             return
         filetypes = [
             ("文本文件", "*.txt"),
@@ -166,6 +323,7 @@ class StealthNoteApp(
             self.current_file = path
             self.current_encoding = encoding
             self._modified = False
+            self._exit_autosave_mode()
             self._update_title()
             self._add_recent(path)
             self._save_config_debounced()
@@ -203,6 +361,14 @@ class StealthNoteApp(
             self.current_file = path
             self.current_encoding = 'utf-8'
             self._modified = False
+            # 暂存模式下另存为新文件成功：清空 Autosave.txt，退出暂存模式
+            if self._autosave_mode:
+                try:
+                    with open(AUTOSAVE_FILE, 'w', encoding='utf-8') as f:
+                        f.write("")
+                except Exception:
+                    pass
+                self._exit_autosave_mode()
             self._update_title()
             self._add_recent(path)
             self._save_config_debounced()
@@ -251,6 +417,8 @@ class StealthNoteApp(
 
     def _init_shortcuts(self):
         binds = [
+            ("<Control-n>",      lambda e: (self.file_new(), "break")[1]),
+            ("<Control-N>",      lambda e: (self.file_new(), "break")[1]),
             ("<Control-o>",      lambda e: self.file_open()),
             ("<Control-O>",      lambda e: self.file_open()),
             ("<Control-s>",      lambda e: (self.file_save(), "break")[1]),
@@ -289,27 +457,19 @@ class StealthNoteApp(
         self._window_visible = True
         # deiconify 后重新设置窗口样式，防止 WS_EX_TOOLWINDOW 被重置导致任务栏双窗口
         self._apply_window_style()
-        # 如果书写框被双击隐藏，恢复时保持隐藏（仅显示手柄）
-        if getattr(self, '_text_hidden', False):
-            self.root.withdraw()
-            self.content_win.withdraw()
-            # v2.9.7: 重新显示仅手柄的 root 视图
-            cs = self._get_handle_canvas_size()
-            if hasattr(self, '_hidden_window_geo') and self._hidden_window_geo:
-                x, y, w, h = self._hidden_window_geo
-                handle_center_x = x - HANDLE_REF_R - 20
-                handle_center_y = y + HANDLE_REF_R
-                self.root.geometry(f"{cs}x{cs}+{handle_center_x - cs // 2}+{handle_center_y - cs // 2}")
-                self.handle_canvas.place(x=0, y=0)
-                self.root.deiconify()
+        self._sync_content_window()
+        self._layout_handle()
+        # 标题栏同步显示
+        if hasattr(self, '_refresh_titlebar'):
+            self._refresh_titlebar()
+        # 状态栏同步显示
+        if hasattr(self, '_refresh_statusbar'):
+            self._refresh_statusbar()
+        self._force_foreground()
+        if self.cfg.get('stealth_mode') and self.stealth_text.winfo_viewable():
+            self.stealth_text.focus_set()
         else:
-            self._sync_content_window()
-            self._layout_handle()
-            self._force_foreground()
-            if self.cfg.get('stealth_mode') and self.stealth_text.winfo_viewable():
-                self.stealth_text.focus_set()
-            else:
-                self.text.focus_set()
+            self.text.focus_set()
         self._taskbar_host.sync()
 
     def _hide_window(self):
@@ -317,6 +477,14 @@ class StealthNoteApp(
         self.content_win.withdraw()
         if self.cfg['show_panel']:
             self.panel.withdraw()
+        # 标题栏同步隐藏
+        if hasattr(self, 'titlebar_win') and self.titlebar_win and self.titlebar_win.winfo_exists():
+            self.titlebar_win.withdraw()
+            self._titlebar_visible = False
+        # 状态栏同步隐藏
+        if hasattr(self, 'statusbar_win') and self.statusbar_win and self.statusbar_win.winfo_exists():
+            self.statusbar_win.withdraw()
+            self._statusbar_visible = False
         self._window_visible = False
         self._taskbar_host.sync()
 
@@ -350,8 +518,18 @@ class StealthNoteApp(
             self._tray_toggle()
 
     def exit_app(self):
-        if self._check_save_before_close():
-            return
+        # 若设置面板处于预览状态（self.cfg 指向 _preview_cfg），先恢复原始配置，避免保存预览值
+        if hasattr(self, '_original_cfg') and self._original_cfg is not None:
+            self.cfg = self._original_cfg
+            self._original_cfg = None
+        # 暂存模式下退出：自动保存暂存内容，不弹窗询问，记录关闭状态
+        if self._autosave_mode:
+            self._autosave_save()
+            self.cfg['last_autosave_closed'] = True
+        else:
+            self.cfg['last_autosave_closed'] = False
+            if self._check_save_before_close():
+                return
         try:
             if self._window_visible:
                 self.cfg['window_width'] = self.content_win.winfo_width()

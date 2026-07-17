@@ -7,7 +7,11 @@ from utils import create_app_icon
 
 
 class TrayIcon:
-    """系统托盘图标：始终存在，左键切换显示/隐藏，右键菜单"""
+    """系统托盘图标：始终存在，左键切换显示/隐藏，右键菜单。
+
+    v2.9.8.4: 托盘右键菜单与圆形手柄右键菜单保持一致。
+    所有动作通过 root.after(0, ...) 转发到主线程执行。
+    """
 
     def __init__(self, app):
         self.app = app
@@ -26,25 +30,98 @@ class TrayIcon:
             return
 
         try:
-            def on_tray_clicked(icon, item):
-                action = str(item)
-                if action == "显示/隐藏":
-                    self.app.root.after(0, self._toggle)
-                elif action == "打开文件":
-                    self.app.root.after(0, self.app.file_open)
-                elif action == "保存文件":
-                    self.app.root.after(0, self.app.file_save)
-                elif action == "设置":
-                    self.app.root.after(0, self.app.show_settings)
-                elif action == "退出":
-                    self.app.root.after(0, self.app.exit_app)
+            # ===== 菜单项回调（按手柄菜单顺序） =====
+            def _after(fn):
+                """转发到主线程执行"""
+                self.app.root.after(0, fn)
 
+            def on_show_hide(icon, item):
+                _after(self._toggle)
+
+            def on_panel_locked(icon, item):
+                _after(self.app._toggle_panel_locked)
+
+            def on_open(icon, item):
+                _after(self.app.file_open)
+
+            def on_save(icon, item):
+                _after(self.app.file_save)
+
+            def on_load_autosave(icon, item):
+                _after(self.app._load_autosave)
+
+            def on_stealth(icon, item):
+                _after(self.app.toggle_stealth)
+
+            def on_stealth_lines(icon, item):
+                n = int(str(item))
+                _after(lambda: self.app._set_stealth_lines(n))
+
+            def on_adapt_bg(icon, item):
+                _after(self.app.toggle_adapt_bg)
+
+            def on_theme(icon, item):
+                _after(self.app._toggle_theme_menu)
+
+            def on_invert(icon, item):
+                _after(self.app.toggle_invert)
+
+            def on_read(icon, item):
+                _after(self.app.toggle_read)
+
+            def on_topmost(icon, item):
+                _after(self.app.toggle_topmost)
+
+            def on_settings(icon, item):
+                _after(self.app.show_settings)
+
+            def on_about(icon, item):
+                _after(self.app._show_about)
+
+            def on_exit(icon, item):
+                _after(self.app.exit_app)
+
+            # ===== 动态状态查询函数（用于复选框勾选状态） =====
+            def is_panel_locked(item):
+                return bool(self.app.cfg.get('panel_locked', True))
+
+            def is_adapt_bg(item):
+                return bool(self.app.cfg.get('adapt_bg', False))
+
+            def is_light_mode(item):
+                return self.app.cfg.get('theme_mode', 'dark') == 'light'
+
+            def stealth_label(item):
+                return "退出隐写模式" if self.app.cfg.get('stealth_mode') else "隐写模式"
+
+            def stealth_lines_value(item):
+                return int(self.app.cfg.get('stealth_lines', 3))
+
+            # ===== 菜单结构（与 handle.py 完全一致） =====
             menu = TrayMenu(
-                TrayItem("显示/隐藏", on_tray_clicked, default=True),
-                TrayItem("打开文件", on_tray_clicked),
-                TrayItem("保存文件", on_tray_clicked),
-                TrayItem("设置", on_tray_clicked),
-                TrayItem("退出", on_tray_clicked)
+                TrayItem("显示/隐藏主窗口", on_show_hide, default=True),
+                TrayItem("锁定仪表板相对位置", on_panel_locked, checked=is_panel_locked),
+                TrayMenu.SEPARATOR,
+                TrayItem("打开文件", on_open),
+                TrayItem("保存文件", on_save),
+                TrayItem("读取暂存", on_load_autosave),
+                TrayMenu.SEPARATOR,
+                TrayItem(stealth_label, on_stealth),
+                TrayMenu.SEPARATOR,
+                TrayItem("一行模式", on_stealth_lines, radio=True, checked=lambda i: stealth_lines_value(i) == 1),
+                TrayItem("两行模式", on_stealth_lines, radio=True, checked=lambda i: stealth_lines_value(i) == 2),
+                TrayItem("三行模式", on_stealth_lines, radio=True, checked=lambda i: stealth_lines_value(i) == 3),
+                TrayMenu.SEPARATOR,
+                TrayItem("双击适配背景", on_adapt_bg, checked=is_adapt_bg),
+                TrayItem("浅色模式", on_theme, checked=is_light_mode),
+                TrayItem("反色显示", on_invert),
+                TrayItem("易读模式", on_read),
+                TrayItem("置顶模式", on_topmost),
+                TrayMenu.SEPARATOR,
+                TrayItem("设置", on_settings),
+                TrayMenu.SEPARATOR,
+                TrayItem("关于", on_about),
+                TrayItem("退出", on_exit),
             )
 
             icon_image = self._load_icon()

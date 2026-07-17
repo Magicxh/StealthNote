@@ -16,8 +16,8 @@ DEFAULT_CONFIG = {
     "window_y": None,
     "topmost": False,
     "show_taskbar": True,
-    "show_titlebar": False,
-    "show_statusbar": False,
+    "show_titlebar": True,
+    "show_statusbar": True,
     "bg_color": "#000000",
     "bg_opacity": 0.50,
     "text_color": "#FFFFFF",
@@ -43,9 +43,12 @@ DEFAULT_CONFIG = {
     "panel_bg_color": "#2c2c2c",
     "panel_x": None,
     "panel_y": None,
+    "panel_locked": True,
     "stealth_mode": False,
     "stealth_lines": 3,
+    "adapt_bg": False,
     "recent_files": [],
+    "last_autosave_closed": False,
 }
 
 
@@ -76,7 +79,7 @@ def validate_config(cfg):
 
     for k in ["topmost", "show_taskbar", "show_titlebar", "show_statusbar",
               "read_mode", "invert_mode", "show_scrollbar", "show_panel",
-              "stealth_mode"]:
+              "stealth_mode", "adapt_bg", "last_autosave_closed", "panel_locked"]:
         if k in result and not isinstance(result[k], bool):
             result[k] = DEFAULT_CONFIG[k]
 
