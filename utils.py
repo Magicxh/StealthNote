@@ -23,8 +23,17 @@ def invert_color(hex_color):
 
 
 def mix_color(fg_hex, opacity, bg_hex="#000000"):
-    """按透明度混合前景色和背景色"""
+    """按透明度混合前景色和背景色
+
+    v2.9.8.5: 对 opacity 做 [0,1] clamp，对 r/g/b 做 [0,255] clamp，
+    防止配置越界导致无效颜色字符串（如 #132 或 #-1）。
+    """
     try:
+        # v2.9.8.5: opacity 边界保护
+        if opacity < 0:
+            opacity = 0.0
+        elif opacity > 1:
+            opacity = 1.0
         fc = fg_hex.lstrip('#')
         fr, fg_i, fb = int(fc[0:2], 16), int(fc[2:4], 16), int(fc[4:6], 16)
         bc = bg_hex.lstrip('#')
@@ -32,6 +41,10 @@ def mix_color(fg_hex, opacity, bg_hex="#000000"):
         r = int(fr * opacity + br * (1 - opacity))
         g = int(fg_i * opacity + bg_i2 * (1 - opacity))
         b = int(fb * opacity + bb * (1 - opacity))
+        # v2.9.8.5: r/g/b 边界保护
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
         return f"#{r:02x}{g:02x}{b:02x}"
     except Exception:
         return fg_hex

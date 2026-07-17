@@ -113,14 +113,17 @@ class TitlebarMixin:
             # 设置窗口透明度
             if self.cfg['read_mode']:
                 # 易读模式：使用 read_bg_opacity 控制透明度，与 content_win 一致
-                alpha = int(max(0.0, self.cfg['read_bg_opacity']) * 255)
+                # v2.9.8.5: alpha 边界 clamp
+                alpha = int(max(0.0, min(1.0, self.cfg['read_bg_opacity'])) * 255)
             else:
-                alpha = int(max(0.05, self.cfg['bg_opacity']) * 255)
+                alpha = int(max(0.05, min(1.0, self.cfg['bg_opacity'])) * 255)
             user32.SetLayeredWindowAttributes(
                 self._titlebar_hwnd, COLORKEY_INT, alpha, LWA_ALPHA | LWA_COLORKEY)
 
-            # topmost 同步
-            self.titlebar_win.attributes("-topmost", bool(self.cfg['topmost']))
+            # topmost 同步（v2.9.8.5: 仅在变化时切换，避免冗余 z-order 重排）
+            new_topmost = bool(self.cfg['topmost'])
+            if bool(self.titlebar_win.attributes('-topmost')) != new_topmost:
+                self.titlebar_win.attributes("-topmost", new_topmost)
         except Exception as e:
             print(f"[标题栏] 外观更新失败: {e}")
 

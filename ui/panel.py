@@ -240,44 +240,67 @@ class PanelMixin:
                 pass
 
     def _on_panel_press(self, event):
-        self._panel_drag_active = True
-        self._panel_drag_dx = event.x_root - self.panel.winfo_x()
-        self._panel_drag_dy = event.y_root - self.panel.winfo_y()
-        # v2.9.8.3: 相对位置锁定时记录 root 与 panel 的偏移，联动移动
-        if self.cfg.get('panel_locked') and hasattr(self, 'root') and self.root:
-            self._root_drag_dx_panel = self.root.winfo_x() - self.panel.winfo_x()
-            self._root_drag_dy_panel = self.root.winfo_y() - self.panel.winfo_y()
-        else:
-            self._root_drag_dx_panel = None
-            self._root_drag_dy_panel = None
-        self.panel.lift()
+        # v2.9.8.5: panel 销毁后不执行
+        if not (hasattr(self, 'panel') and self.panel and self.panel.winfo_exists()):
+            return
+        try:
+            self._panel_drag_active = True
+            self._panel_drag_dx = event.x_root - self.panel.winfo_x()
+            self._panel_drag_dy = event.y_root - self.panel.winfo_y()
+            # v2.9.8.3: 相对位置锁定时记录 root 与 panel 的偏移，联动移动
+            if self.cfg.get('panel_locked') and hasattr(self, 'root') and self.root:
+                self._root_drag_dx_panel = self.root.winfo_x() - self.panel.winfo_x()
+                self._root_drag_dy_panel = self.root.winfo_y() - self.panel.winfo_y()
+            else:
+                self._root_drag_dx_panel = None
+                self._root_drag_dy_panel = None
+            self.panel.lift()
+        except Exception as e:
+            print(f"[仪表盘] 拖动开始失败: {e}")
+            self._panel_drag_active = False
 
     def _on_panel_drag(self, event):
         if not self._panel_drag_active:
             return
-        x = event.x_root - self._panel_drag_dx
-        y = event.y_root - self._panel_drag_dy
-        self.panel.geometry(f"+{x}+{y}")
-        # v2.9.8.3: 相对位置锁定时联动移动 root（会自动同步 content_win/标题栏/状态栏）
-        if (self.cfg.get('panel_locked') and hasattr(self, 'root') and self.root
-                and self._root_drag_dx_panel is not None):
-            new_rx = x + self._root_drag_dx_panel
-            new_ry = y + self._root_drag_dy_panel
-            self.root.geometry(f"+{new_rx}+{new_ry}")
-            self._sync_content_window()
+        # v2.9.8.5: panel/root 销毁后不执行
+        if not (hasattr(self, 'panel') and self.panel and self.panel.winfo_exists()):
+            self._panel_drag_active = False
+            return
+        try:
+            x = event.x_root - self._panel_drag_dx
+            y = event.y_root - self._panel_drag_dy
+            self.panel.geometry(f"+{x}+{y}")
+            # v2.9.8.3: 相对位置锁定时联动移动 root（会自动同步 content_win/标题栏/状态栏）
+            if (self.cfg.get('panel_locked') and hasattr(self, 'root') and self.root
+                    and self.root.winfo_exists() and self._root_drag_dx_panel is not None):
+                new_rx = x + self._root_drag_dx_panel
+                new_ry = y + self._root_drag_dy_panel
+                self.root.geometry(f"+{new_rx}+{new_ry}")
+                self._sync_content_window()
+        except Exception as e:
+            print(f"[仪表盘] 拖动失败: {e}")
+            self._panel_drag_active = False
 
     def _on_panel_release(self, event):
         if self._panel_drag_active:
-            self.cfg['panel_x'] = self.panel.winfo_x()
-            self.cfg['panel_y'] = self.panel.winfo_y()
-            # v2.9.8.3: 相对位置锁定时同步保存 root 位置（window_x/y 为文本框坐标）
-            if self.cfg.get('panel_locked') and hasattr(self, 'root') and self.root:
-                offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
-                root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
-                self.cfg['window_x'] = self.root.winfo_x() + offset
-                self.cfg['window_y'] = self.root.winfo_y() + root_y_offset
-            self._save_config_debounced()
-            self._panel_drag_active = False
+            try:
+                # v2.9.8.5: panel 销毁后不读取坐标
+                if not (hasattr(self, 'panel') and self.panel and self.panel.winfo_exists()):
+                    self._panel_drag_active = False
+                    return
+                self.cfg['panel_x'] = self.panel.winfo_x()
+                self.cfg['panel_y'] = self.panel.winfo_y()
+                # v2.9.8.3: 相对位置锁定时同步保存 root 位置（window_x/y 为文本框坐标）
+                if self.cfg.get('panel_locked') and hasattr(self, 'root') and self.root and self.root.winfo_exists():
+                    offset = self._get_handle_offset() if hasattr(self, '_get_handle_offset') else 0
+                    root_y_offset = self._get_handle_root_y_offset() if hasattr(self, '_get_handle_root_y_offset') else 0
+                    self.cfg['window_x'] = self.root.winfo_x() + offset
+                    self.cfg['window_y'] = self.root.winfo_y() + root_y_offset
+                self._save_config_debounced()
+            except Exception as e:
+                print(f"[仪表盘] 拖动结束失败: {e}")
+            finally:
+                self._panel_drag_active = False
 
     # -------------------------------------------------------------------------
     # 按钮悬停 Tooltip

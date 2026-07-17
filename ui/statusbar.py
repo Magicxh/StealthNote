@@ -91,13 +91,17 @@ class StatusbarMixin:
                 self._statusbar_canvas.tag_raise(self._statusbar_text_id)
 
             if self.cfg['read_mode']:
-                alpha = int(max(0.0, self.cfg['read_bg_opacity']) * 255)
+                # v2.9.8.5: alpha 边界 clamp
+                alpha = int(max(0.0, min(1.0, self.cfg['read_bg_opacity'])) * 255)
             else:
-                alpha = int(max(0.05, self.cfg['bg_opacity']) * 255)
+                alpha = int(max(0.05, min(1.0, self.cfg['bg_opacity'])) * 255)
             user32.SetLayeredWindowAttributes(
                 self._statusbar_hwnd, COLORKEY_INT, alpha, LWA_ALPHA | LWA_COLORKEY)
 
-            self.statusbar_win.attributes("-topmost", bool(self.cfg['topmost']))
+            # v2.9.8.5: topmost 仅在变化时切换，避免冗余 z-order 重排
+            new_topmost = bool(self.cfg['topmost'])
+            if bool(self.statusbar_win.attributes('-topmost')) != new_topmost:
+                self.statusbar_win.attributes("-topmost", new_topmost)
         except Exception as e:
             print(f"[状态栏] 外观更新失败: {e}")
 
@@ -139,12 +143,29 @@ class StatusbarMixin:
     # -------------------------------------------------------------------------
 
     def _layout_statusbar(self):
-        """同步状态栏位置到标题栏右侧"""
+        """同步状态栏位置到标题栏右侧
+
+        v2.9.8.5: 标题栏隐藏时，状态栏改为贴 content_win 右上角上方，
+        避免贴在隐藏的标题栏旁导致位置错乱。
+        """
         if not hasattr(self, 'statusbar_win') or not self.statusbar_win or not self.statusbar_win.winfo_exists():
             return
-        if not hasattr(self, 'titlebar_win') or not self.titlebar_win or not self.titlebar_win.winfo_exists():
-            return
         try:
+            # v2.9.8.5: 标题栏不可见时，状态栏贴 content_win 上方
+            if not getattr(self, '_titlebar_visible', False):
+                if not hasattr(self, 'content_win') or not self.content_win or not self.content_win.winfo_exists():
+                    return
+                cx = self.content_win.winfo_x()
+                cy = self.content_win.winfo_y()
+                cw = self.content_win.winfo_width()
+                # 状态栏贴 content_win 右上角上方，与标题栏同高度位置
+                sx = cx + cw - self._statusbar_width
+                sy = cy - STATUSBAR_HEIGHT - STATUSBAR_GAP
+                self.statusbar_win.geometry(f"+{sx}+{sy}")
+                return
+            # 标题栏可见时，排在标题栏右侧
+            if not hasattr(self, 'titlebar_win') or not self.titlebar_win or not self.titlebar_win.winfo_exists():
+                return
             tx = self.titlebar_win.winfo_x()
             ty = self.titlebar_win.winfo_y()
             tw = self._titlebar_width
@@ -152,8 +173,8 @@ class StatusbarMixin:
             sx = tx + tw + STATUSBAR_GAP
             sy = ty
             self.statusbar_win.geometry(f"+{sx}+{sy}")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[状态栏] 布局失败: {e}")
 
     # -------------------------------------------------------------------------
     # 显示/隐藏

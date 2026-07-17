@@ -63,6 +63,14 @@ class StealthNoteApp(
         self._panel_drag_active = False
         self._panel_drag_dx = 0
         self._panel_drag_dy = 0
+        # v2.9.8.5: 联动拖动偏移量初始化，防止 AttributeError
+        self._panel_drag_dx_handle = None
+        self._panel_drag_dy_handle = None
+        self._root_drag_dx_panel = None
+        self._root_drag_dy_panel = None
+        # v2.9.8.5: 防抖 ID 初始化
+        self._read_bg_after_id = None
+        self._statusbar_text_after_id = None
         self._window_visible = True
         self._corner_dirty = True
         self._save_after_id = None

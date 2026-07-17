@@ -302,6 +302,13 @@ class TextClusterMixin:
 
         # 易读模式背景
         if self.cfg['read_mode']:
+            # v2.9.8.5: 取消挂起的防抖回调，避免直接调用后旧回调又触发一次冗余执行
+            if getattr(self, '_read_bg_after_id', None):
+                try:
+                    self.root.after_cancel(self._read_bg_after_id)
+                except Exception:
+                    pass
+                self._read_bg_after_id = None
             self._apply_read_mode_bg()
         else:
             try:
@@ -517,8 +524,14 @@ class TextClusterMixin:
                 self._autosave_dirty = True
             self._update_title()
             # v2.9.8: 同步状态栏字数显示
+            # v2.9.8.5: 80ms 防抖，避免每次按键触发 O(N) 全文读取+Canvas重绘
             if hasattr(self, '_update_statusbar_text'):
-                self._update_statusbar_text()
+                if getattr(self, '_statusbar_text_after_id', None):
+                    try:
+                        self.root.after_cancel(self._statusbar_text_after_id)
+                    except Exception:
+                        pass
+                self._statusbar_text_after_id = self.root.after(80, self._do_update_statusbar_text)
             self.text.edit_modified(False)
             if self.cfg['read_mode']:
                 # 防抖：取消旧的 after 回调，避免快速输入时回调堆积
@@ -531,13 +544,25 @@ class TextClusterMixin:
             if self.cfg.get('stealth_mode'):
                 self.root.after(10, self._sync_to_stealth)
 
+    def _do_update_statusbar_text(self):
+        """v2.9.8.5: 状态栏字数更新实际执行（防抖回调）"""
+        self._statusbar_text_after_id = None
+        if hasattr(self, '_update_statusbar_text'):
+            self._update_statusbar_text()
+
     def _on_stealth_text_modified(self, event):
         if self.stealth_text.edit_modified():
             self._modified = True
             self._update_title()
             # v2.9.8: 同步状态栏字数显示
+            # v2.9.8.5: 80ms 防抖
             if hasattr(self, '_update_statusbar_text'):
-                self._update_statusbar_text()
+                if getattr(self, '_statusbar_text_after_id', None):
+                    try:
+                        self.root.after_cancel(self._statusbar_text_after_id)
+                    except Exception:
+                        pass
+                self._statusbar_text_after_id = self.root.after(80, self._do_update_statusbar_text)
             self.stealth_text.edit_modified(False)
             self.root.after(10, self._sync_from_stealth)
 

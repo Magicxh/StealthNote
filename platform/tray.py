@@ -53,9 +53,11 @@ class TrayIcon:
             def on_stealth(icon, item):
                 _after(self.app.toggle_stealth)
 
-            def on_stealth_lines(icon, item):
-                n = int(str(item))
-                _after(lambda: self.app._set_stealth_lines(n))
+            # v2.9.8.5: 修复 int(str(item)) 抛 ValueError——改用闭包捕获行数值
+            def make_stealth_lines_handler(n):
+                def handler(icon, item):
+                    _after(lambda: self.app._set_stealth_lines(n))
+                return handler
 
             def on_adapt_bg(icon, item):
                 _after(self.app.toggle_adapt_bg)
@@ -108,9 +110,9 @@ class TrayIcon:
                 TrayMenu.SEPARATOR,
                 TrayItem(stealth_label, on_stealth),
                 TrayMenu.SEPARATOR,
-                TrayItem("一行模式", on_stealth_lines, radio=True, checked=lambda i: stealth_lines_value(i) == 1),
-                TrayItem("两行模式", on_stealth_lines, radio=True, checked=lambda i: stealth_lines_value(i) == 2),
-                TrayItem("三行模式", on_stealth_lines, radio=True, checked=lambda i: stealth_lines_value(i) == 3),
+                TrayItem("一行模式", make_stealth_lines_handler(1), radio=True, checked=lambda i: stealth_lines_value(i) == 1),
+                TrayItem("两行模式", make_stealth_lines_handler(2), radio=True, checked=lambda i: stealth_lines_value(i) == 2),
+                TrayItem("三行模式", make_stealth_lines_handler(3), radio=True, checked=lambda i: stealth_lines_value(i) == 3),
                 TrayMenu.SEPARATOR,
                 TrayItem("双击适配背景", on_adapt_bg, checked=is_adapt_bg),
                 TrayMenu.SEPARATOR,

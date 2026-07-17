@@ -173,7 +173,8 @@ class RootWindowMixin:
         SWP_FRAMECHANGED 会触发 Win32 级别重绘，覆盖仪表盘小红点 Canvas 的 lift() 操作。
         """
         try:
-            bg_op = max(0.05, self.cfg['bg_opacity'])
+            # v2.9.8.5: bg_opacity 边界 clamp，防止 alpha 溢出 BYTE 范围
+            bg_op = max(0.05, min(1.0, self.cfg['bg_opacity']))
 
             # 计算实际背景色（含反色）
             raw_bg = self.cfg['bg_color']
@@ -203,14 +204,15 @@ class RootWindowMixin:
             # 易读模式：LWA_ALPHA | LWA_COLORKEY，alpha = read_bg_opacity * 255
             # COLORKEY 区域（空行）全透明，有文字行通过 read_bg tag 显示半透明背景
             if self.cfg['read_mode']:
-                read_alpha = int(max(0.0, self.cfg['read_bg_opacity']) * 255)
+                # v2.9.8.5: read_bg_opacity 边界 clamp
+                read_alpha = int(max(0.0, min(1.0, self.cfg['read_bg_opacity'])) * 255)
                 user32.SetLayeredWindowAttributes(
                     self._content_hwnd, COLORKEY_INT, read_alpha,
                     LWA_ALPHA | LWA_COLORKEY)
             else:
                 # LWA_ALPHA | LWA_COLORKEY：alpha 控制整体半透明，COLORKEY(#010101) 穿透
                 user32.SetLayeredWindowAttributes(
-                    self._content_hwnd, COLORKEY_INT, int(max(0.0, bg_op) * 255),
+                    self._content_hwnd, COLORKEY_INT, int(max(0.0, min(1.0, bg_op)) * 255),
                     LWA_ALPHA | LWA_COLORKEY)
 
             # ===== topmost 设置（仅在配置变化时切换，避免冗余 z-order 重排）=====
@@ -289,6 +291,12 @@ class RootWindowMixin:
 
     def _on_window_resized(self):
         self._resize_after_id = None
+        # v2.9.8.5: root 销毁后不执行，防止 TclError
+        try:
+            if not self.root.winfo_exists():
+                return
+        except Exception:
+            return
         self._sync_content_window()
         self._layout_corners()
         self._layout_handle()

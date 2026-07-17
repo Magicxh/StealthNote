@@ -109,6 +109,10 @@ class HandleMixin:
         self.handle_menu.add_command(label="关于", command=self._show_about)
         self.handle_menu.add_command(label="退出", command=self.exit_app)
 
+        # v2.9.8.5: 修复 adapt_bg=True 启动时双击手柄事件未绑定的回归
+        if self.cfg.get('adapt_bg', False):
+            self.handle_canvas.bind("<Double-Button-1>", self._on_handle_double_click)
+
     # -------------------------------------------------------------------------
     # 显示/布局
     # -------------------------------------------------------------------------
@@ -171,10 +175,8 @@ class HandleMixin:
         else:
             root_h = self.root.winfo_height()
 
-        if root_x < 0:
-            root_x = 0
-        if root_y < 0:
-            root_y = 0
+        # v2.9.8.5: 移除负坐标钳制，与 _on_handle_drag 行为一致，允许窗口部分拖出屏幕
+        # 原钳制会导致用户拖动到负坐标后被弹回 (0,0)
 
         # v2.9.7.3: geometry 去重 + 2px 容差，避免像素级抖动反复触发 geometry() → <Configure> 循环
         cur_x = self.root.winfo_x()

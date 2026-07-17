@@ -672,6 +672,8 @@ class SettingsMixin:
 
     def _apply_settings(self):
         self.cfg = copy.deepcopy(self._preview_cfg)
+        # v2.9.8.5: 更新 _original_cfg，防止"应用"后"取消"回滚已应用的变更
+        self._original_cfg = copy.deepcopy(self._preview_cfg)
         # 第1步：窗口样式（含 taskbar sync），同步执行确保样式立即生效
         self._apply_window_style()
         # 第2步：延迟执行其余重操作，让事件循环处理积压事件，避免长时间无响应
