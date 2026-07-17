@@ -116,6 +116,9 @@ class HandleMixin:
     def _show_handle(self):
         """显示手柄并布局"""
         try:
+            # v2.9.8.4: 确保 content_win 已同步到 root 位置，
+            # 防止 _do_layout_handle 读到 content_win 默认 (0,0) 将 root 拖到左上角
+            self._sync_content_window()
             self._layout_handle()
             self._update_handle()
         except Exception as e:
@@ -145,6 +148,13 @@ class HandleMixin:
             text_x = self.content_win.winfo_x()
             text_y = self.content_win.winfo_y()
             text_w = self.content_win.winfo_width()
+            # v2.9.8.4: 防御 content_win 位置未同步（返回0）导致 root 被拖到左上角
+            # 正常情况 text_x 应等于 root_x + offset，若偏差过大则以 root 为准正推
+            expected_x = self.root.winfo_x() + offset
+            expected_y = self.root.winfo_y() + root_y_offset
+            if abs(text_x - expected_x) > 10 or abs(text_y - expected_y) > 10:
+                text_x = expected_x
+                text_y = expected_y
         except Exception:
             return
 
