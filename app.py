@@ -102,6 +102,9 @@ class StealthNoteApp(
 
         # 应用初始样式
         self.root.deiconify()
+        self.root.update_idletasks()
+        # v2.9.8.4: 立即同步 content_win 位置，防止 _do_layout_handle 读到 (0,0) 将 root 拖到左上角
+        self._sync_content_window()
         self._apply_window_style()
         self._apply_text_appearance()
         self._refresh_titlebar()
